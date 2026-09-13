@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="RoomShift">
+  <rect width="64" height="64" rx="16" fill="#246b67"/>
+  <path d="M16 47V22l16-9 16 9v25H16Z" fill="#f5f2eb"/>
+  <path d="M25 47V33h14v14M16 22l16 9 16-9" fill="none" stroke="#246b67" stroke-width="4" stroke-linejoin="round"/>
+  <circle cx="46" cy="16" r="5" fill="#d88764"/>
+</svg>
