@@ -1,0 +1,6 @@
+{
+  "name": "roomshift", "version": "1.0.0", "private": true, "type": "module",
+  "scripts": {"dev": "concurrently -k -n api,studio \"tsx server/index.ts\" \"vite --host 127.0.0.1\"", "build": "vite build", "start": "tsx server/index.ts"},
+  "dependencies": {"@react-three/drei": "^9.122.0", "@react-three/fiber": "^8.18.0", "express": "^4.21.2", "lucide-react": "^0.468.0", "react": "^18.3.1", "react-dom": "^18.3.1", "three": "^0.172.0", "zod": "^3.24.2"},
+  "devDependencies": {"@types/express": "^4.17.21", "@types/node": "^22.10.5", "@types/react": "^18.3.18", "@types/react-dom": "^18.3.5", "@types/three": "^0.172.0", "@vitejs/plugin-react": "^4.3.4", "concurrently": "^9.1.2", "tsx": "^4.19.2", "typescript": "^5.7.3", "vite": "^6.0.7"}
+}
