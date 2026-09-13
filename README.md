@@ -14,7 +14,8 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173). The planner runs entirely o
 ## Included tools
 
 - Furniture editing with drag, rotate, resize, duplicate, lock, delete, undo, and local persistence.
-- Configurable door placement and clearance, multiple windows, and paintings, mirrors, wall shelves, and wall plants.
+- Configurable door placement and clearance, multiple windows, and paintings, mirrors, wall shelves, and wall plants. Windows and wall objects can be selected, dragged along their wall, and resized with stage handles.
+- Separate Edit, AI, Architecture, and Checks menus keep the right rail focused instead of putting every control in one scroll.
 - Explicit layout checks for room boundaries, furniture overlap, door clearance, and tall furniture blocking windows.
 - Save export for the JSON layout plus `roomshift-2d.png` and `roomshift-3d.png` images.
 - `npm run build` creates the production client in `dist/`.

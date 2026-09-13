@@ -58,11 +58,14 @@ export type Layout = z.infer<typeof layoutSchema>;
 export function normalizeLayout(value:unknown):Layout {
   const parsed=layoutSchema.parse(value);
   const raw=value as {door?:unknown;windows?:unknown;decorations?:unknown}|null;
+  const rawDoor=raw && raw.door ? parsed.door : defaultDoor(parsed.width);
+  const doorWidth=clampWallSpan(parsed,rawDoor.wall,rawDoor.width,.6);
+  const normalizedDoor={...rawDoor,width:doorWidth,offset:clampWallOffset(parsed,rawDoor.wall,rawDoor.offset,doorWidth)};
   return {
     ...parsed,
-    door:raw && raw.door ? parsed.door : defaultDoor(parsed.width),
-    windows:raw && Array.isArray(raw.windows) ? parsed.windows : defaultWindows.map(w=>({...w})),
-    decorations:raw && Array.isArray(raw.decorations) ? parsed.decorations : defaultDecorations.map(d=>({...d}))
+    door:normalizedDoor,
+    windows:(raw && Array.isArray(raw.windows) ? parsed.windows : defaultWindows.map(w=>({...w}))).map(window=>{const width=clampWallSpan(parsed,window.wall,window.width,.4);return {...window,width,offset:clampWallOffset(parsed,window.wall,window.offset,width)};}),
+    decorations:(raw && Array.isArray(raw.decorations) ? parsed.decorations : defaultDecorations.map(d=>({...d}))).map(decoration=>{const width=clampWallSpan(parsed,decoration.wall,decoration.width,.2);return {...decoration,width,offset:clampWallOffset(parsed,decoration.wall,decoration.offset,width)};})
   };
 }
 
@@ -104,6 +107,9 @@ export function wallRect(l:Layout,wall:Wall,offset:number,span:number,depth:numb
   if(wall==='east')return {x:l.width/2-depth/2,z:offset,width:depth,depth:span,rotation:0};
   return {x:-l.width/2+depth/2,z:offset,width:depth,depth:span,rotation:0};
 }
+export function wallLength(l:Layout,wall:Wall){return wall==='north'||wall==='south'?l.width:l.depth;}
+export function clampWallSpan(l:Layout,wall:Wall,span:number,min=.2){return Math.min(wallLength(l,wall),Math.max(min,span));}
+export function clampWallOffset(l:Layout,wall:Wall,offset:number,span:number){const max=Math.max(0,wallLength(l,wall)/2-span/2);return Math.min(max,Math.max(-max,offset));}
 export function doorZone(l:Layout){return wallRect(l,l.door.wall,l.door.offset,l.door.width,l.door.clearance);}
 export function windowZone(l:Layout,w:WindowConfig){return wallRect(l,w.wall,w.offset,w.width,w.clearance);}
 export function checks(l:Layout){

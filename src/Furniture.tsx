@@ -19,9 +19,9 @@ function surface(fabric=false){
   if(fabric){t.repeat.set(3,3);fabricMap=t;}else woodMap=t;return t;
 }
 type V=[number,number,number];
-export function Box({p=[0,0,0],s=[1,1,1],color='#c3a178',wood=false,fabric=false,r=.015,rotation=[0,0,0]}:{p?:V;s?:V;color?:string;wood?:boolean;fabric?:boolean;r?:number;rotation?:V}){
+export function Box({p=[0,0,0],s=[1,1,1],color='#c3a178',wood=false,fabric=false,r=.015,rotation=[0,0,0],opacity=1,transparent=false}:{p?:V;s?:V;color?:string;wood?:boolean;fabric?:boolean;r?:number;rotation?:V;opacity?:number;transparent?:boolean}){
   const map=useMemo(()=>wood||fabric?surface(fabric):null,[wood,fabric]);
-  return <RoundedBox position={p} args={s} radius={Math.min(r,...s.map(v=>v/3))} smoothness={2} rotation={rotation} castShadow receiveShadow><meshStandardMaterial color={color} map={map} roughness={fabric?.96:.72}/></RoundedBox>;
+  return <RoundedBox position={p} args={s} radius={Math.min(r,...s.map(v=>v/3))} smoothness={2} rotation={rotation} castShadow receiveShadow><meshStandardMaterial color={color} map={map} roughness={fabric?.96:.72} side={THREE.DoubleSide} transparent={transparent} opacity={opacity} depthWrite={!transparent}/></RoundedBox>;
 }
 function Cylinder({p,s,color='#b79770'}:{p:V;s:V;color?:string}){return <mesh position={p} scale={s} castShadow receiveShadow><cylinderGeometry args={[1,.88,1,32]}/><meshStandardMaterial color={color} roughness={.8}/></mesh>;}
 export function Plant({position=[0,0,0],scale=1}:{position?:V;scale?:number}){

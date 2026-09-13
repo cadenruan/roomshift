@@ -3,56 +3,63 @@ import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, OrthographicCamera, Line, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { Box, Furniture, Plant } from './Furniture';
-import { catalog, corners, doorZone, type DecorationConfig, type Item, type Kind, type Layout, type Wall, type WindowConfig } from '../shared/layout';
+import { catalog, clampWallOffset, corners, doorZone, wallLength, type DecorationConfig, type Item, type Kind, type Layout, type Wall, type WindowConfig } from '../shared/layout';
 
-type Props={layout:Layout;selected:string|null;onSelect:(id:string|null)=>void;onMove:(id:string,x:number,z:number)=>void;onAdd:(kind:Kind,x:number,z:number)=>void;view:'2D'|'3D';zoom:number;reset:number;preview:boolean;showClearance:boolean};
-function Art({position,rotation=0,variant=0,scale=1}:{position:[number,number,number];rotation?:number;variant?:number;scale?:number}){
+type ArchitectureSelection={type:'window'|'decoration';id:string};
+type ArchitectureDrag={type:'window'|'decoration';id:string;wall:Wall;mode:'move'|'start'|'end';offset:number;width:number};
+type Props={layout:Layout;selected:string|null;selectedArchitecture:ArchitectureSelection|null;onSelect:(id:string|null)=>void;onSelectArchitecture:(selection:ArchitectureSelection)=>void;onMove:(id:string,x:number,z:number)=>void;onArchitectureChange:(type:'window'|'decoration',id:string,patch:{offset:number;width:number})=>void;onAdd:(kind:Kind,x:number,z:number)=>void;view:'2D'|'3D';zoom:number;reset:number;preview:boolean;showClearance:boolean;transparentFrontWalls:boolean};
+function Art({position,rotation=0,variant=0,scale=1,ghost=false}:{position:[number,number,number];rotation?:number;variant?:number;scale?:number|[number,number,number];ghost?:boolean}){
   return <group position={position} rotation={[0,rotation,0]} scale={scale}>
-    <Box s={[.47,.63,.035]} color="#a1835e" wood/><Box p={[0,0,.023]} s={[.415,.575,.012]} color="#e8ddc6"/>
-    <Box p={[0,-.03,.032]} s={[.34,.43,.01]} color={variant?'#abac93':'#c0a581'}/>
-    <mesh position={[0,-.13,.044]}><shapeGeometry args={[new THREE.Shape([new THREE.Vector2(-.17,-.11),new THREE.Vector2(.17,-.11),new THREE.Vector2(.17,.08),new THREE.Vector2(.04,.17),new THREE.Vector2(-.07,.09),new THREE.Vector2(-.17,.13)])]}/><meshStandardMaterial color={variant?'#6f755e':'#475c59'}/></mesh>
+    <Box s={[.47,.63,.035]} color="#a1835e" wood transparent={ghost} opacity={ghost?.16:1}/><Box p={[0,0,.023]} s={[.415,.575,.012]} color="#e8ddc6" transparent={ghost} opacity={ghost?.16:1}/>
+    <Box p={[0,-.03,.032]} s={[.34,.43,.01]} color={variant?'#abac93':'#c0a581'} transparent={ghost} opacity={ghost?.16:1}/>
+    <mesh position={[0,-.13,.044]}><shapeGeometry args={[new THREE.Shape([new THREE.Vector2(-.17,-.11),new THREE.Vector2(.17,-.11),new THREE.Vector2(.17,.08),new THREE.Vector2(.04,.17),new THREE.Vector2(-.07,.09),new THREE.Vector2(-.17,.13)])]}/><meshStandardMaterial side={THREE.DoubleSide} color={variant?'#6f755e':'#475c59'} transparent={ghost} opacity={ghost?.16:1}/></mesh>
   </group>;
 }
 function wallTransform(layout:Layout,wall:Wall,offset:number,y:number,inset=.07):[number,number,number] {
-  if(wall==='north')return [offset,y,-layout.depth/2-inset];
-  if(wall==='south')return [offset,y,layout.depth/2+inset];
-  if(wall==='east')return [layout.width/2+inset,y,offset];
-  return [-layout.width/2-inset,y,offset];
+  if(wall==='north')return [offset,y,-layout.depth/2+inset];
+  if(wall==='south')return [offset,y,layout.depth/2-inset];
+  if(wall==='east')return [layout.width/2-inset,y,offset];
+  return [-layout.width/2+inset,y,offset];
 }
 function wallRotation(wall:Wall){return wall==='east'?Math.PI/2:wall==='west'?-Math.PI/2:wall==='north'?Math.PI:0;}
-function WindowUnit({layout,window,top}:{layout:Layout;window:WindowConfig;top:boolean}){
+function ResizeHandles({width,height,top,onPointerDown}:{width:number;height:number;top:boolean;onPointerDown:(event:ThreeEvent<PointerEvent>,mode:'start'|'end')=>void}){
+  const y=top?.02:0;
+  return <>{[-1,1].map((edge)=><mesh key={edge} position={[edge*width/2,y,-.13]} onPointerDown={(event)=>{event.stopPropagation();onPointerDown(event,edge<0?'start':'end');}}><boxGeometry args={[.1,top?.1:.1,.1]}/><meshBasicMaterial color="#2c7475"/></mesh>)}</>;
+}
+function WindowUnit({layout,window,top,selected,ghost,onPointerDown,onResize}:{layout:Layout;window:WindowConfig;top:boolean;selected:boolean;ghost:boolean;onPointerDown:(event:ThreeEvent<PointerEvent>)=>void;onResize:(event:ThreeEvent<PointerEvent>,mode:'start'|'end')=>void}){
   const height=top?.16:window.height, y=top?.08:window.sill+window.height/2;
-  return <group position={wallTransform(layout,window.wall,window.offset,y)} rotation={[0,wallRotation(window.wall),0]}>
-    {top?<Box s={[window.width,.12,.14]} color="#92bdbc"/>:<>
-      <Box s={[window.width+.16,height+.16,.1]} color="#e8e2d4" wood/>
-      <Box p={[0,0,.06]} s={[window.width,height,.025]} color="#d9e7df"/>
-      {[-.5,.5].map((x)=><Box key={x} p={[x*window.width,0,.09]} s={[.035,height,.03]} color="#797c6d"/>)}
-      <Box p={[0,0,.09]} s={[window.width,.035,.03]} color="#797c6d"/>
+  return <group position={wallTransform(layout,window.wall,window.offset,y)} rotation={[0,wallRotation(window.wall),0]} onPointerDown={onPointerDown}>
+    {top?<Box s={[window.width,.12,.14]} color="#92bdbc" transparent={ghost} opacity={ghost?.15:1}/>:<>
+      <Box s={[window.width+.16,height+.16,.1]} color="#e8e2d4" wood transparent={ghost} opacity={ghost?.15:1}/>
+      <Box p={[0,0,.06]} s={[window.width,height,.025]} color="#d9e7df" transparent={ghost} opacity={ghost?.15:1}/>
+      {[-.5,.5].map((x)=><Box key={x} p={[x*window.width,0,.09]} s={[.035,height,.03]} color="#797c6d" transparent={ghost} opacity={ghost?.15:1}/>)}
+      <Box p={[0,0,.09]} s={[window.width,.035,.03]} color="#797c6d" transparent={ghost} opacity={ghost?.15:1}/>
     </>}
+    {selected && <ResizeHandles width={window.width} height={height} top={top} onPointerDown={onResize} />}
   </group>;
 }
-function DoorUnit({layout,top}:{layout:Layout;top:boolean}){
+function DoorUnit({layout,top,ghost}:{layout:Layout;top:boolean;ghost:boolean}){
   const door=layout.door, y=top?.08:1.05;
   return <group position={wallTransform(layout,door.wall,door.offset,y,.08)} rotation={[0,wallRotation(door.wall),0]}>
-    {top?<Box s={[door.width,.12,door.clearance]} color="#c89a68"/>:<>
-      <Box p={[-door.width/2-.055,0,0]} s={[.11,2.16,.15]} color="#d8d0c0"/><Box p={[door.width/2+.055,0,0]} s={[.11,2.16,.15]} color="#d8d0c0"/>
-      <Box p={[0,1.08,0]} s={[door.width+.22,.12,.15]} color="#ddd5c7"/>
-      <Box p={[0,0,.008]} s={[door.width,2.02,.05]} wood color="#bd9d73"/>
-      <Box p={[door.width*.36,.0,.05]} s={[.04,.12,.035]} color="#514b3c"/>
+    {top?<Box s={[door.width,.12,door.clearance]} color="#c89a68" transparent={ghost} opacity={ghost?.15:1}/>:<>
+      <Box p={[-door.width/2-.055,0,0]} s={[.11,2.16,.15]} color="#d8d0c0" transparent={ghost} opacity={ghost?.15:1}/><Box p={[door.width/2+.055,0,0]} s={[.11,2.16,.15]} color="#d8d0c0" transparent={ghost} opacity={ghost?.15:1}/>
+      <Box p={[0,1.08,0]} s={[door.width+.22,.12,.15]} color="#ddd5c7" transparent={ghost} opacity={ghost?.15:1}/>
+      <Box p={[0,0,.008]} s={[door.width,2.02,.05]} wood color="#bd9d73" transparent={ghost} opacity={ghost?.15:1}/>
+      <Box p={[door.width*.36,.0,.05]} s={[.04,.12,.035]} color="#514b3c" transparent={ghost} opacity={ghost?.15:1}/>
     </>}
   </group>;
 }
-function WallDecoration({layout,decoration,top}:{layout:Layout;decoration:DecorationConfig;top:boolean}){
-  const y=top?.12:decoration.kind==='wall-shelf'?1.25:1.72;
-  const position=wallTransform(layout,decoration.wall,decoration.offset,y,.085);
-  const rotation=wallRotation(decoration.wall);
-  if(decoration.kind==='painting')return <Art position={position} rotation={rotation} variant={decoration.color==='#6f755e'?1:0} scale={decoration.width/.47}/>
-  if(decoration.kind==='mirror')return <group position={position} rotation={[0,rotation,0]}><Box s={[decoration.width,decoration.height,.05]} color="#b7a98e"/><Box p={[0,0,.035]} s={[decoration.width-.1,decoration.height-.1,.025]} color={decoration.color}/></group>;
-  if(decoration.kind==='wall-shelf')return <group position={position} rotation={[0,rotation,0]}><Box s={[decoration.width,.12,.24]} color="#b99565" wood/><Box p={[0,.25,0]} s={[.06,.42,.06]} color="#617548"/></group>;
-  return <group position={position} rotation={[0,rotation,0]} scale={.75}><Plant/></group>;
+function WallDecoration({layout,decoration,top,selected,ghost,onPointerDown,onResize}:{layout:Layout;decoration:DecorationConfig;top:boolean;selected:boolean;ghost:boolean;onPointerDown:(event:ThreeEvent<PointerEvent>)=>void;onResize:(event:ThreeEvent<PointerEvent>,mode:'start'|'end')=>void}){
+  const y=top?.12:decoration.kind==='wall-shelf'?1.25:1.72,position=wallTransform(layout,decoration.wall,decoration.offset,y,.085),rotation=wallRotation(decoration.wall);
+  const handles=selected&&<ResizeHandles width={decoration.width} height={top?.16:decoration.height} top={top} onPointerDown={onResize}/>;
+  if(decoration.kind==='painting')return <group position={position} rotation={[0,rotation,0]} onPointerDown={onPointerDown}><Art position={[0,0,.05]} variant={decoration.color==='#6f755e'?1:0} scale={[decoration.width/.47,decoration.height/.63,1]} ghost={ghost}/>{handles}</group>;
+  if(decoration.kind==='mirror')return <group position={position} rotation={[0,rotation,0]} onPointerDown={onPointerDown}><Box s={[decoration.width,decoration.height,.05]} color="#b7a98e" transparent={ghost} opacity={ghost?.15:1}/><Box p={[0,0,.035]} s={[decoration.width-.1,decoration.height-.1,.025]} color={decoration.color} transparent={ghost} opacity={ghost?.15:1}/>{handles}</group>;
+  if(decoration.kind==='wall-shelf')return <group position={position} rotation={[0,rotation,0]} onPointerDown={onPointerDown}><Box s={[decoration.width,.12,.24]} color="#b99565" wood transparent={ghost} opacity={ghost?.15:1}/><Box p={[0,.25,0]} s={[.06,.42,.06]} color="#617548" transparent={ghost} opacity={ghost?.15:1}/>{handles}</group>;
+  return <group position={position} rotation={[0,rotation,0]} onPointerDown={onPointerDown} visible={!ghost} scale={[decoration.width/.42,decoration.height/.8,decoration.width/.42]}><Plant/>{handles}</group>;
 }
-function Architecture({layout,top,clearance}:{layout:Layout;top:boolean;clearance:boolean}){
+function Architecture({layout,top,clearance,transparentFrontWalls,selectedArchitecture,onArchitecturePointerDown,onArchitectureResize}:{layout:Layout;top:boolean;clearance:boolean;transparentFrontWalls:boolean;selectedArchitecture:ArchitectureSelection|null;onArchitecturePointerDown:(event:ThreeEvent<PointerEvent>,selection:ArchitectureSelection,mode:'move'|'start'|'end')=>void;onArchitectureResize:(event:ThreeEvent<PointerEvent>,selection:ArchitectureSelection,mode:'start'|'end')=>void}){
   const {width:w,depth:d}=layout,wall=top?.10:2.65,door=doorZone(layout);
+  const frontWall=(which:Wall)=>transparentFrontWalls&&(which==='south'||which==='east');
   const planks=useMemo(()=>{
     const result:{x:number;z:number;w:number;color:string}[]=[];const rows=Math.ceil(d/.19);
     for(let row=0;row<rows;row++){let x=-w/2,segment=0;while(x<w/2-.001){const length=Math.min(segment===0?.55+(row%3)*.36:1.24,w/2-x);result.push({x:x+length/2,z:-d/2+(row+.5)*d/rows,w:length,color:['#d7bb96','#d4b18b','#ddbf9a','#cfad83','#ddc3a0'][(row*3+segment*7)%5]});x+=length;segment++;}}
@@ -63,21 +70,34 @@ function Architecture({layout,top,clearance}:{layout:Layout;top:boolean;clearanc
   return <group>
     <Box p={[0,-.13,0]} s={[w+.22,.24,d+.22]} color="#bdb6a7"/>
     {planks.map((p,i)=><Box key={i} p={[p.x,.006,p.z]} s={[p.w-.007,.025,d/Math.ceil(d/.19)-.006]} color={p.color} wood r={.001}/>)}
-    <Box p={[-w/2-.055,wall/2,-.01]} s={[.11,wall,d+.1]} color="#d9d0bf"/><Box p={[w/2+.055,.16,0]} s={[.11,.32,d+.1]} color="#d8d0c1"/>
-    <Box p={[0,.065,d/2+.055]} s={[w+.2,.13,.11]} color="#d8d0c1"/><Box p={[0,.065,-d/2-.055]} s={[w+.2,.13,.11]} color="#d8d0c1"/>
-    {!top&&<><Box p={[0,1.325,-d/2-.055]} s={[w+.2,2.65,.11]} color="#d4c9b5"/><Box p={[0,1.325,d/2+.055]} s={[w+.2,2.65,.11]} color="#d4c9b5"/><Box p={[-w/2-.055,1.325,0]} s={[.11,2.65,d+.1]} color="#d9d0bf"/><Box p={[w/2+.055,1.325,0]} s={[.11,2.65,d+.1]} color="#d8d0c1"/></>}
-    {layout.windows.map(window=><WindowUnit key={window.id} layout={layout} window={window} top={top}/>)}
-    <DoorUnit layout={layout} top={top}/>
-    {layout.decorations.map(decoration=><WallDecoration key={decoration.id} layout={layout} decoration={decoration} top={top}/>)}
+    <Box p={[-w/2-.055,wall/2,-.01]} s={[.11,wall,d+.1]} color="#d9d0bf" transparent={frontWall('west')} opacity={frontWall('west')?.14:1}/><Box p={[w/2+.055,.16,0]} s={[.11,.32,d+.1]} color="#d8d0c1" transparent={frontWall('east')} opacity={frontWall('east')?.14:1}/>
+    <Box p={[0,.065,d/2+.055]} s={[w+.2,.13,.11]} color="#d8d0c1" transparent={frontWall('south')} opacity={frontWall('south')?.14:1}/><Box p={[0,.065,-d/2-.055]} s={[w+.2,.13,.11]} color="#d8d0c1"/>
+    {!top&&<><Box p={[0,1.325,-d/2-.055]} s={[w+.2,2.65,.11]} color="#d4c9b5"/><Box p={[0,1.325,d/2+.055]} s={[w+.2,2.65,.11]} color="#d4c9b5" transparent={frontWall('south')} opacity={frontWall('south')?.14:1}/><Box p={[-w/2-.055,1.325,0]} s={[.11,2.65,d+.1]} color="#d9d0bf"/><Box p={[w/2+.055,1.325,0]} s={[.11,2.65,d+.1]} color="#d8d0c1" transparent={frontWall('east')} opacity={frontWall('east')?.14:1}/></>}
+    {layout.windows.map(window=><WindowUnit key={window.id} layout={layout} window={window} top={top} selected={selectedArchitecture?.type==='window'&&selectedArchitecture.id===window.id} ghost={frontWall(window.wall)} onPointerDown={(event)=>onArchitecturePointerDown(event,{type:'window',id:window.id},'move')} onResize={(event,mode)=>onArchitectureResize(event,{type:'window',id:window.id},mode)}/>)}
+    <DoorUnit layout={layout} top={top} ghost={frontWall(layout.door.wall)}/>
+    {layout.decorations.map(decoration=><WallDecoration key={decoration.id} layout={layout} decoration={decoration} top={top} selected={selectedArchitecture?.type==='decoration'&&selectedArchitecture.id===decoration.id} ghost={frontWall(decoration.wall)} onPointerDown={(event)=>onArchitecturePointerDown(event,{type:'decoration',id:decoration.id},'move')} onResize={(event,mode)=>onArchitectureResize(event,{type:'decoration',id:decoration.id},mode)}/>)}
     {(clearance||top)&&<><mesh rotation={[-Math.PI/2,0,0]} position={[door.x,.03,door.z]}><planeGeometry args={[door.width,door.depth]}/><meshBasicMaterial color="#d3a365" transparent opacity={.13} depthWrite={false}/></mesh><Line points={doorCorners} color="#b89d79" dashed dashSize={.06} gapSize={.04} lineWidth={1}/></>}
     {top&&<><Html position={[0,.1,d/2+.3]} center><span className="measure">{w.toFixed(1)} m</span></Html><Html position={[-w/2-.35,.1,0]} center><span className="measure">{d.toFixed(1)} m</span></Html>{layout.windows.map(window=><Html key={`label-${window.id}`} position={wallTransform(layout,window.wall,window.offset,.1,.2)} center><span className="measure">WINDOW</span></Html>)}</>}
   </group>;
+}
+function wallHitOffset(event:ThreeEvent<PointerEvent>,layout:Layout,wall:Wall,top:boolean){
+  const hit=new THREE.Vector3();
+  const plane=top?new THREE.Plane(new THREE.Vector3(0,1,0),0):wall==='north'?new THREE.Plane(new THREE.Vector3(0,0,1),layout.depth/2):wall==='south'?new THREE.Plane(new THREE.Vector3(0,0,1),-layout.depth/2):wall==='east'?new THREE.Plane(new THREE.Vector3(1,0,0),-layout.width/2):new THREE.Plane(new THREE.Vector3(1,0,0),layout.width/2);
+  if(!event.ray.intersectPlane(plane,hit))return null;
+  return wall==='north'||wall==='south'?hit.x:hit.z;
 }
 function Scene(p:Props){
   const {camera,gl,size}=useThree();const controls=useRef<any>(null);
   const [drag,setDrag]=useState<{id:string;offset:THREE.Vector3;start:THREE.Vector3;current:THREE.Vector3}|null>(null);
   const [draft,setDraft]=useState<{id:string;x:number;z:number}|null>(null);
+  const [architectureDrag,setArchitectureDrag]=useState<ArchitectureDrag|null>(null);
+  const [architectureDraft,setArchitectureDraft]=useState<{offset:number;width:number}|null>(null);
   const plane=useMemo(()=>new THREE.Plane(new THREE.Vector3(0,1,0),0),[]),top=p.view==='2D';
+  const visualLayout=useMemo(()=>{
+    if(!architectureDrag||!architectureDraft)return p.layout;
+    if(architectureDrag.type==='window')return {...p.layout,windows:p.layout.windows.map(window=>window.id===architectureDrag.id?{...window,...architectureDraft}:window)};
+    return {...p.layout,decorations:p.layout.decorations.map(decoration=>decoration.id===architectureDrag.id?{...decoration,...architectureDraft}:decoration)};
+  },[architectureDrag,architectureDraft,p.layout]);
   useEffect(()=>{camera.position.set(...(top?[0,12,.001]:[7.3,10.5,12.8]) as [number,number,number]);camera.lookAt(0,0,0);if(controls.current){controls.current.target.set(0,top?0:.55,0);controls.current.update();}},[camera,top,p.reset]);
   useEffect(()=>{const cam=camera as THREE.OrthographicCamera;cam.zoom=Math.min(size.width/(p.layout.width+2.25),size.height/(p.layout.depth+2.25))*p.zoom;cam.updateProjectionMatrix();},[camera,size,p.zoom,p.layout.width,p.layout.depth,top]);
   useEffect(()=>{
@@ -85,10 +105,17 @@ function Scene(p:Props){
     const over=(e:DragEvent)=>{e.preventDefault();if(e.dataTransfer)e.dataTransfer.dropEffect='copy';};gl.domElement.addEventListener('drop',drop);gl.domElement.addEventListener('dragover',over);return ()=>{gl.domElement.removeEventListener('drop',drop);gl.domElement.removeEventListener('dragover',over);};
   },[camera,gl,plane,p.onAdd,p.preview]);
   const begin=(e:ThreeEvent<PointerEvent>,item:Item)=>{if(p.preview)return;e.stopPropagation();p.onSelect(item.id);if(item.locked||e.button!==0)return;const hit=new THREE.Vector3();if(!e.ray.intersectPlane(plane,hit))return;(e.target as Element).setPointerCapture(e.pointerId);setDrag({id:item.id,offset:new THREE.Vector3(item.x,0,item.z).sub(hit),start:hit.clone(),current:new THREE.Vector3(item.x,0,item.z)});if(controls.current)controls.current.enabled=false;gl.domElement.style.cursor='grabbing';};
-  const move=(e:ThreeEvent<PointerEvent>)=>{if(!drag)return;e.stopPropagation();const hit=new THREE.Vector3();if(!e.ray.intersectPlane(plane,hit))return;hit.add(drag.offset);drag.current.set(Math.round(hit.x*20)/20,0,Math.round(hit.z*20)/20);setDraft({id:drag.id,x:drag.current.x,z:drag.current.z});};
-  const end=(e:ThreeEvent<PointerEvent>)=>{if(!drag)return;e.stopPropagation();(e.target as Element).releasePointerCapture(e.pointerId);p.onMove(drag.id,drag.current.x,drag.current.z);setDrag(null);setDraft(null);if(controls.current)controls.current.enabled=true;gl.domElement.style.cursor='grab';};
+  const beginArchitecture=(e:ThreeEvent<PointerEvent>,selection:ArchitectureSelection,mode:'move'|'start'|'end')=>{if(p.preview)return;e.stopPropagation();p.onSelectArchitecture(selection);const feature=selection.type==='window'?p.layout.windows.find(window=>window.id===selection.id):p.layout.decorations.find(decoration=>decoration.id===selection.id);if(!feature)return;const hit=wallHitOffset(e,p.layout,feature.wall,top);if(hit===null)return;(e.target as Element).setPointerCapture(e.pointerId);setArchitectureDrag({type:selection.type,id:selection.id,wall:feature.wall,mode,offset:feature.offset,width:feature.width});setArchitectureDraft({offset:feature.offset,width:feature.width});if(controls.current)controls.current.enabled=false;gl.domElement.style.cursor=mode==='move'?'grabbing':'ew-resize';};
+  const move=(e:ThreeEvent<PointerEvent>)=>{
+    if(architectureDrag){e.stopPropagation();const coordinate=wallHitOffset(e,p.layout,architectureDrag.wall,top);if(coordinate===null)return;const minimum=architectureDrag.type==='window'?.4:.2,current=architectureDraft||{offset:architectureDrag.offset,width:architectureDrag.width};let offset=current.offset,width=current.width;const left=architectureDrag.offset-architectureDrag.width/2,right=architectureDrag.offset+architectureDrag.width/2;if(architectureDrag.mode==='move'){offset=clampWallOffset(p.layout,architectureDrag.wall,coordinate,width);}else if(architectureDrag.mode==='start'){const nextLeft=Math.min(coordinate,right-minimum);offset=(nextLeft+right)/2;width=right-nextLeft;}else{const nextRight=Math.max(coordinate,left+minimum);offset=(left+nextRight)/2;width=nextRight-left;}offset=clampWallOffset(p.layout,architectureDrag.wall,offset,width);setArchitectureDraft({offset:Math.round(offset*100)/100,width:Math.round(width*100)/100});return;}
+    if(!drag)return;e.stopPropagation();const hit=new THREE.Vector3();if(!e.ray.intersectPlane(plane,hit))return;hit.add(drag.offset);drag.current.set(Math.round(hit.x*20)/20,0,Math.round(hit.z*20)/20);setDraft({id:drag.id,x:drag.current.x,z:drag.current.z});
+  };
+  const end=(e:ThreeEvent<PointerEvent>)=>{
+    if(architectureDrag){e.stopPropagation();(e.target as Element).releasePointerCapture(e.pointerId);const draft=architectureDraft;if(draft)p.onArchitectureChange(architectureDrag.type,architectureDrag.id,draft);setArchitectureDrag(null);setArchitectureDraft(null);if(controls.current)controls.current.enabled=true;gl.domElement.style.cursor='grab';return;}
+    if(!drag)return;e.stopPropagation();(e.target as Element).releasePointerCapture(e.pointerId);p.onMove(drag.id,drag.current.x,drag.current.z);setDrag(null);setDraft(null);if(controls.current)controls.current.enabled=true;gl.domElement.style.cursor='grab';
+  };
   return <><color attach="background" args={['#f4f1e9']}/><ambientLight intensity={.9}/><hemisphereLight args={['#fff9ed','#a79b83',1.5]}/><directionalLight position={[-3,9,3]} intensity={2.6} castShadow shadow-mapSize={[2048,2048]} shadow-camera-left={-7} shadow-camera-right={7} shadow-camera-top={7} shadow-camera-bottom={-7} shadow-normalBias={.025} shadow-bias={-.0002} shadow-radius={4}/><directionalLight position={[3,5,-4]} intensity={1.2} color="#fff4d8"/><mesh rotation={[-Math.PI/2,0,0]} position={[0,-.265,0]} receiveShadow><planeGeometry args={[200,200]}/><shadowMaterial transparent opacity={.14}/></mesh>
-    <Architecture layout={p.layout} top={top} clearance={p.showClearance}/><mesh rotation={[-Math.PI/2,0,0]} position={[0,.029,0]} onClick={e=>{e.stopPropagation();if(!drag)p.onSelect(null);}}><planeGeometry args={[p.layout.width,p.layout.depth]}/><meshBasicMaterial transparent opacity={0} depthWrite={false}/></mesh>
+    <Architecture layout={visualLayout} top={top} clearance={p.showClearance} transparentFrontWalls={p.transparentFrontWalls} selectedArchitecture={p.selectedArchitecture} onArchitecturePointerDown={beginArchitecture} onArchitectureResize={(event,selection,mode)=>beginArchitecture(event,selection,mode)}/><mesh rotation={[-Math.PI/2,0,0]} position={[0,.029,0]} onClick={e=>{e.stopPropagation();if(!drag&&!architectureDrag)p.onSelect(null);}}><planeGeometry args={[p.layout.width,p.layout.depth]}/><meshBasicMaterial transparent opacity={0} depthWrite={false}/></mesh>
     {p.layout.items.map(item=>{const i=draft?.id===item.id?{...item,x:draft.x,z:draft.z}:item,selected=p.selected===i.id&&!p.preview;return <group key={i.id} position={[i.x,i.kind==='rug'?.024:.045,i.z]} rotation={[0,i.rotation*Math.PI/180,0]} onPointerDown={e=>begin(e,i)} onPointerMove={move} onPointerUp={end} onPointerCancel={end}><Furniture item={i}/>{(selected||p.preview)&&<Line points={[[-i.width/2,.025,-i.depth/2],[i.width/2,.025,-i.depth/2],[i.width/2,.025,i.depth/2],[-i.width/2,.025,i.depth/2],[-i.width/2,.025,-i.depth/2]]} color={p.preview?'#bd925b':'#51c4b6'} lineWidth={2.5}/>} {selected&&<mesh position={[0,.015,0]} rotation={[-Math.PI/2,0,0]}><planeGeometry args={[i.width+.04,i.depth+.04]}/><meshBasicMaterial color="#49c6b7" transparent opacity={.12} depthWrite={false}/></mesh>}</group>;})}
     <OrbitControls ref={controls} makeDefault enabled={!drag} enableRotate={!top} enablePan minPolarAngle={.1} maxPolarAngle={Math.PI/2.15} minZoom={25} maxZoom={220} enableDamping dampingFactor={.12}/>
   </>;

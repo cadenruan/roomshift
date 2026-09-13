@@ -7,6 +7,8 @@ import {
   ChevronRight,
   Copy,
   DoorOpen,
+  Eye,
+  EyeOff,
   GripVertical,
   KeyRound,
   Lock,
@@ -29,6 +31,8 @@ import Room, { Thumbnail } from './Room';
 import {
   catalog,
   checks,
+  clampWallOffset,
+  clampWallSpan,
   findSpace,
   issues,
   makeItem,
@@ -49,6 +53,8 @@ import {
 
 const STORAGE_KEY = 'roomshift-layout-v1';
 const promptStarter = 'Give both roommates a study area and keep the middle open.';
+type Rail = 'edit' | 'ai' | 'architecture' | 'checks';
+type ArchitectureSelection = { type: 'window' | 'decoration'; id: string } | null;
 
 function safeInitialLayout(): Layout {
   try {
@@ -133,14 +139,19 @@ function App() {
   const [proposal, setProposal] = useState<(Proposal & { id: string }) | null>(null);
   const [notice, setNotice] = useState<{ tone: 'success' | 'warning' | 'error'; text: string } | null>(null);
   const [showClearance, setShowClearance] = useState(false);
+  const [transparentFrontWalls, setTransparentFrontWalls] = useState(false);
   const [catalogQuery, setCatalogQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [activeRail, setActiveRail] = useState<Rail>('edit');
+  const [selectedArchitecture, setSelectedArchitecture] = useState<ArchitectureSelection>(null);
   const [checksRun, setChecksRun] = useState(true);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const layoutVersion = useRef(0);
   const last3DImage = useRef<string | null>(null);
 
   const selectedItem = useMemo(() => layout.items.find((item) => item.id === selected) ?? null, [layout, selected]);
+  const selectedWindow = useMemo(() => selectedArchitecture?.type === 'window' ? layout.windows.find((window) => window.id === selectedArchitecture.id) ?? null : null, [layout.windows, selectedArchitecture]);
+  const selectedDecoration = useMemo(() => selectedArchitecture?.type === 'decoration' ? layout.decorations.find((decoration) => decoration.id === selectedArchitecture.id) ?? null : null, [layout.decorations, selectedArchitecture]);
   const layoutChecks = useMemo(() => checks(layout), [layout]);
   const allIssues = useMemo(() => issues(layout), [layout]);
   const hasIssues = allIssues.length > 0;
@@ -207,6 +218,14 @@ function App() {
 
   function select(id: string | null) {
     setSelected(id);
+    setSelectedArchitecture(null);
+    setNotice(null);
+  }
+
+  function selectArchitecture(selection: NonNullable<ArchitectureSelection>) {
+    setSelected(null);
+    setSelectedArchitecture(selection);
+    setActiveRail('edit');
     setNotice(null);
   }
 
@@ -312,21 +331,29 @@ function App() {
   }
 
   function patchDoor(patch: Partial<DoorConfig>) {
-    commitArchitecture({ ...layout, door: { ...layout.door, ...patch } }, 'Door configuration updated.');
+    const nextDoor = { ...layout.door, ...patch };
+    const width = clampWallSpan(layout, nextDoor.wall, nextDoor.width, .6);
+    commitArchitecture({ ...layout, door: { ...nextDoor, width, offset: clampWallOffset(layout, nextDoor.wall, nextDoor.offset, width) } }, 'Door configuration updated.');
   }
 
   function addWindow() {
     const id = `window-${Date.now()}`;
     const window: WindowConfig = { id, wall: 'north', offset: 0, width: 1.4, sill: 1.05, height: 1.2, clearance: .45 };
     commitArchitecture({ ...layout, windows: [...layout.windows, window] }, 'Window added.');
+    selectArchitecture({ type: 'window', id });
   }
 
   function patchWindow(id: string, patch: Partial<WindowConfig>) {
-    commitArchitecture({ ...layout, windows: layout.windows.map((window) => window.id === id ? { ...window, ...patch } : window) }, 'Window configuration updated.');
+    const current = layout.windows.find((window) => window.id === id);
+    if (!current) return;
+    const nextWindow = { ...current, ...patch };
+    const width = clampWallSpan(layout, nextWindow.wall, nextWindow.width, .4);
+    commitArchitecture({ ...layout, windows: layout.windows.map((window) => window.id === id ? { ...nextWindow, width, offset: clampWallOffset(layout, nextWindow.wall, nextWindow.offset, width) } : window) }, 'Window configuration updated.');
   }
 
   function removeWindow(id: string) {
     commitArchitecture({ ...layout, windows: layout.windows.filter((window) => window.id !== id) }, 'Window removed.');
+    if (selectedArchitecture?.type === 'window' && selectedArchitecture.id === id) setSelectedArchitecture(null);
   }
 
   function addDecoration(kind: DecorationKind) {
@@ -336,11 +363,21 @@ function App() {
   }
 
   function patchDecoration(id: string, patch: Partial<DecorationConfig>) {
-    commitArchitecture({ ...layout, decorations: layout.decorations.map((decoration) => decoration.id === id ? { ...decoration, ...patch } : decoration) }, 'Wall decoration updated.');
+    const current = layout.decorations.find((decoration) => decoration.id === id);
+    if (!current) return;
+    const nextDecoration = { ...current, ...patch };
+    const width = clampWallSpan(layout, nextDecoration.wall, nextDecoration.width, .2);
+    commitArchitecture({ ...layout, decorations: layout.decorations.map((decoration) => decoration.id === id ? { ...nextDecoration, width, offset: clampWallOffset(layout, nextDecoration.wall, nextDecoration.offset, width) } : decoration) }, 'Wall decoration updated.');
   }
 
   function removeDecoration(id: string) {
     commitArchitecture({ ...layout, decorations: layout.decorations.filter((decoration) => decoration.id !== id) }, 'Wall decoration removed.');
+    if (selectedArchitecture?.type === 'decoration' && selectedArchitecture.id === id) setSelectedArchitecture(null);
+  }
+
+  function moveArchitecture(type: 'window' | 'decoration', id: string, patch: { offset: number; width?: number }) {
+    if (type === 'window') patchWindow(id, patch);
+    else patchDecoration(id, patch);
   }
 
   function runLayoutChecks() {
@@ -502,14 +539,18 @@ function App() {
             <Room
               layout={proposal ? { ...layout, items: proposal.items } : layout}
               selected={selected}
+              selectedArchitecture={selectedArchitecture}
               onSelect={select}
+              onSelectArchitecture={selectArchitecture}
               onMove={moveItem}
+              onArchitectureChange={moveArchitecture}
               onAdd={addItem}
               view={view}
               zoom={zoom}
               reset={resetCamera}
               preview={Boolean(proposal)}
               showClearance={showClearance}
+              transparentFrontWalls={transparentFrontWalls}
             />
             <div className="canvas-legend"><span className="legend-swatch selected-swatch" /> Selected <span className="legend-swatch fixed-swatch" /> Fixed architecture</div>
             {proposal && (
@@ -526,12 +567,15 @@ function App() {
           </div>
           <div className="stage-footer">
             <div><span className="footer-kicker">EDITING TIP</span><span>Drag pieces on the floor · R to rotate · ⌘ Z to undo</span></div>
-            <button className="clearance-toggle" onClick={() => setShowClearance((value) => !value)}><DoorOpen size={15} /> {showClearance ? 'Hide' : 'Show'} door clearance</button>
+            <div className="stage-footer-actions"><button className="clearance-toggle" onClick={() => setShowClearance((value) => !value)}><DoorOpen size={15} /> {showClearance ? 'Hide' : 'Show'} door clearance</button><button className="clearance-toggle" onClick={() => setTransparentFrontWalls((value) => !value)}>{transparentFrontWalls ? <EyeOff size={15} /> : <Eye size={15} />} {transparentFrontWalls ? 'Show' : 'See through'} front walls</button></div>
           </div>
         </section>
 
         <aside className="inspector-panel">
-          <section className="panel ai-panel">
+          <nav className="rail-tabs" aria-label="Room tools">
+            {([['edit', 'Edit'], ['ai', 'AI'], ['architecture', 'Architecture'], ['checks', 'Checks']] as [Rail, string][]).map(([rail, label]) => <button key={rail} className={activeRail === rail ? 'active' : ''} onClick={() => setActiveRail(rail)}>{label}</button>)}
+          </nav>
+          <section className={`panel ai-panel ${activeRail !== 'ai' ? 'rail-hidden' : ''}`}>
             <div className="ai-heading"><div className="ai-icon"><Sparkles size={19} /></div><div><span className="eyebrow">ROOMSHIFT AI</span><h2>AI layout copilot</h2></div><span className="ai-pulse" /></div>
             <p className="ai-intro">Describe the feeling you want. Codex will explore a bounded, collision-checked arrangement while preserving anything locked.</p>
             <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={3} placeholder="Try: keep the middle open…" disabled={pending || Boolean(proposal)} />
@@ -541,7 +585,7 @@ function App() {
             {proposal && <div className="proposal-summary"><span className="summary-label">WHY THIS WORKS</span><p>{proposal.summary}</p></div>}
           </section>
 
-          <section className="panel checks-panel">
+          <section className={`panel checks-panel ${activeRail !== 'checks' ? 'rail-hidden' : ''}`}>
             <div className="section-title"><div><span className="eyebrow">SPATIAL SAFETY</span><h2>Layout checks</h2></div><div className="check-heading-actions"><span className={`check-count ${hasIssues ? 'has-issues' : ''}`}>{hasIssues ? `${allIssues.length} issue${allIssues.length > 1 ? 's' : ''}` : checksRun ? 'All clear' : 'Ready'}</span><button className="check-button" onClick={runLayoutChecks}><Check size={13} /> Check layout</button></div></div>
             <CheckRow label="Room boundaries" detail={layoutChecks.boundary[0] || 'Every piece stays inside the room'} ok={!layoutChecks.boundary.length} />
             <CheckRow label="Furniture overlap" detail={layoutChecks.overlap[0] || 'Solid pieces have breathing room'} ok={!layoutChecks.overlap.length} />
@@ -550,14 +594,15 @@ function App() {
             <p className="checks-note">Guidance for this layout, not a building-code or accessibility certification.</p>
           </section>
 
-          <section className="panel room-size-panel">
+          <section className={`panel room-size-panel ${activeRail !== 'edit' ? 'rail-hidden' : ''}`}>
             <div className="section-title"><div><span className="eyebrow">FIXED ARCHITECTURE</span><h2>Room dimensions</h2></div><span className="dimension-note">meters</span></div>
             <div className="room-size-fields"><RoomField label="Width" value={layout.width} onChange={(value) => changeRoomDimension('width', value)} /><RoomField label="Depth" value={layout.depth} onChange={(value) => changeRoomDimension('depth', value)} /></div>
             <p className="checks-note">Door and window stay fixed as the room grows.</p>
           </section>
 
-          <section className="panel architecture-panel">
-            <div className="section-title"><div><span className="eyebrow">FIXED ARCHITECTURE</span><h2>Doors, windows & walls</h2></div><span className="dimension-note">edit</span></div>
+          <section className={`panel architecture-panel ${activeRail !== 'architecture' ? 'rail-hidden' : ''}`}>
+            <div className="section-title"><div><span className="eyebrow">WALL OBJECTS</span><h2>Doors, windows & decor</h2></div><span className="dimension-note">drag on stage</span></div>
+            <p className="architecture-help">Select a window or decoration in the room to move it. Drag its teal edge handles to resize it. Doors stay fixed here.</p>
             <div className="architecture-section">
               <span className="mini-label">ENTRY DOOR</span>
               <div className="arch-row">
@@ -573,31 +618,30 @@ function App() {
               </div>
             </div>
             <div className="arch-list-heading"><span>WINDOWS · {layout.windows.length}</span><button onClick={addWindow}><Plus size={12} /> Add window</button></div>
-            {layout.windows.map((window) => <div className="arch-item" key={window.id}>
-              <ArchSelect label="Wall" value={window.wall} options={walls.map((wall) => [wall, wallNames[wall]])} onChange={(value) => patchWindow(window.id, { wall: value as Wall })} />
-              <ArchNumber label="Offset" value={window.offset} min={-5} max={5} step={.1} onChange={(value) => patchWindow(window.id, { offset: value })} />
-              <button className="arch-delete" aria-label={`Remove ${window.id}`} onClick={() => removeWindow(window.id)}><Trash2 size={13} /></button>
-              <ArchNumber label="Width" value={window.width} min={.4} max={4} step={.1} onChange={(value) => patchWindow(window.id, { width: clamp(value, .4, 4) })} />
-              <ArchNumber label="Sill height" value={window.sill} min={.3} max={2.4} step={.05} onChange={(value) => patchWindow(window.id, { sill: clamp(value, .3, 2.4) })} />
-              <ArchNumber label="Height" value={window.height} min={.3} max={2.5} step={.05} onChange={(value) => patchWindow(window.id, { height: clamp(value, .3, 2.5) })} />
-              <ArchNumber label="Clear zone" value={window.clearance} min={.1} max={1.2} step={.05} onChange={(value) => patchWindow(window.id, { clearance: clamp(value, .1, 1.2) })} />
-            </div>)}
+            <div className="arch-object-summary">{layout.windows.map((window) => <button key={window.id} onClick={() => selectArchitecture({ type: 'window', id: window.id })}>{window.id}</button>)}</div>
             <div className="arch-list-heading"><span>WALL DECOR · {layout.decorations.length}</span><div className="arch-add-buttons"><button onClick={() => addDecoration('painting')}>+ Painting</button><button onClick={() => addDecoration('mirror')}>+ Mirror</button><button onClick={() => addDecoration('wall-shelf')}>+ Shelf</button><button onClick={() => addDecoration('wall-plant')}>+ Plant</button></div></div>
-            {layout.decorations.map((decoration) => <div className="arch-item decoration-item" key={decoration.id}>
-              <ArchSelect label="Type" value={decoration.kind} options={Object.entries(decorationNames) as [string, string][]} onChange={(value) => patchDecoration(decoration.id, { kind: value as DecorationKind })} />
-              <ArchSelect label="Wall" value={decoration.wall} options={walls.map((wall) => [wall, wallNames[wall]])} onChange={(value) => patchDecoration(decoration.id, { wall: value as Wall })} />
-              <button className="arch-delete" aria-label={`Remove ${decoration.id}`} onClick={() => removeDecoration(decoration.id)}><Trash2 size={13} /></button>
-              <ArchNumber label="Offset" value={decoration.offset} min={-5} max={5} step={.1} onChange={(value) => patchDecoration(decoration.id, { offset: value })} />
-            </div>)}
+            <div className="arch-object-summary">{layout.decorations.map((decoration) => <button key={decoration.id} onClick={() => selectArchitecture({ type: 'decoration', id: decoration.id })}>{decorationNames[decoration.kind]}</button>)}</div>
           </section>
 
-          <details className="panel inspector-card" open>
-            <summary>Edit {itemLabel(selectedItem).toLowerCase()}</summary>
+          <details className={`panel inspector-card ${activeRail !== 'edit' ? 'rail-hidden' : ''}`} open>
+            <summary>Edit {(selectedWindow ? selectedWindow.id : selectedDecoration ? decorationNames[selectedDecoration.kind] : itemLabel(selectedItem)).toLowerCase()}</summary>
+            {selectedWindow ? <>
+              <div className="section-title inspector-title"><div><span className="eyebrow">SELECTED WINDOW</span><h2>{selectedWindow.id}</h2></div><span className="lock-badge">Drag + resize</span></div>
+              <div className="field-grid"><ArchNumber label="Offset" value={selectedWindow.offset} min={-5} max={5} step={.1} onChange={(value) => patchWindow(selectedWindow.id, { offset: value })} /><ArchNumber label="Width" value={selectedWindow.width} min={.4} max={4} step={.05} onChange={(value) => patchWindow(selectedWindow.id, { width: value })} /><ArchNumber label="Sill height" value={selectedWindow.sill} min={.3} max={2.4} step={.05} onChange={(value) => patchWindow(selectedWindow.id, { sill: clamp(value, .3, 2.4) })} /><ArchNumber label="Height" value={selectedWindow.height} min={.3} max={2.5} step={.05} onChange={(value) => patchWindow(selectedWindow.id, { height: clamp(value, .3, 2.5) })} /></div>
+              <div className="arch-row"><ArchSelect label="Wall" value={selectedWindow.wall} options={walls.map((wall) => [wall, wallNames[wall]])} onChange={(value) => patchWindow(selectedWindow.id, { wall: value as Wall })} /><ArchNumber label="Clear zone" value={selectedWindow.clearance} min={.1} max={1.2} step={.05} onChange={(value) => patchWindow(selectedWindow.id, { clearance: clamp(value, .1, 1.2) })} /></div>
+              <div className="position-row"><span>WINDOW</span><span>Teal handles resize</span><button onClick={() => removeWindow(selectedWindow.id)}><Trash2 size={14} /> Remove</button></div>
+            </> : selectedDecoration ? <>
+              <div className="section-title inspector-title"><div><span className="eyebrow">SELECTED WALL DECOR</span><h2>{decorationNames[selectedDecoration.kind]}</h2></div><span className="lock-badge">Drag + resize</span></div>
+              <div className="field-grid"><ArchSelect label="Type" value={selectedDecoration.kind} options={Object.entries(decorationNames) as [string, string][]} onChange={(value) => patchDecoration(selectedDecoration.id, { kind: value as DecorationKind })} /><ArchNumber label="Offset" value={selectedDecoration.offset} min={-5} max={5} step={.1} onChange={(value) => patchDecoration(selectedDecoration.id, { offset: value })} /><ArchNumber label="Width" value={selectedDecoration.width} min={.2} max={3} step={.05} onChange={(value) => patchDecoration(selectedDecoration.id, { width: value })} /><ArchNumber label="Height" value={selectedDecoration.height} min={.2} max={2.5} step={.05} onChange={(value) => patchDecoration(selectedDecoration.id, { height: value })} /></div>
+              <div className="arch-row"><ArchSelect label="Wall" value={selectedDecoration.wall} options={walls.map((wall) => [wall, wallNames[wall]])} onChange={(value) => patchDecoration(selectedDecoration.id, { wall: value as Wall })} /><div className="field color-field"><label htmlFor="decor-color">Finish</label><div className="color-input"><input id="decor-color" type="color" value={selectedDecoration.color} onChange={(event) => patchDecoration(selectedDecoration.id, { color: event.target.value })} /><span>{selectedDecoration.color.toUpperCase()}</span></div></div></div>
+              <div className="position-row"><span>WALL OBJECT</span><span>Teal handles resize</span><button onClick={() => removeDecoration(selectedDecoration.id)}><Trash2 size={14} /> Remove</button></div>
+            </> : <>
             <div className="section-title inspector-title"><div><span className="eyebrow">SELECTED PIECE</span><h2>{itemLabel(selectedItem)}</h2></div>{selectedItem && <span className={`lock-badge ${selectedItem.locked ? 'is-locked' : ''}`}>{selectedItem.locked ? <Lock size={12} /> : <Unlock size={12} />} {selectedItem.locked ? 'Locked' : 'Editable'}</span>}</div>
-            {!selectedItem ? <div className="empty-inspector"><MousePointer2 size={18} /><span>Click a piece in the room to edit its size, color, and position.</span></div> : <>
+            {!selectedItem ? <div className="empty-inspector"><MousePointer2 size={18} /><span>Click a piece, window, or decoration in the room to edit it.</span></div> : <>
               <div className="inspector-actions"><button onClick={rotateSelected} disabled={selectedItem.locked}><RotateCw size={15} /> Rotate 90°</button><button onClick={duplicateSelected}><Copy size={15} /> Duplicate</button><button className="danger-action" onClick={deleteSelected}><Trash2 size={15} /></button></div>
               <div className="field-grid"><Field label="Width" value={selectedItem.width} disabled={selectedItem.locked} onChange={(value) => patchSelected({ width: clamp(value, .2, 4) })} /><Field label="Depth" value={selectedItem.depth} disabled={selectedItem.locked} onChange={(value) => patchSelected({ depth: clamp(value, .2, 4) })} /><Field label="Height" value={selectedItem.height} disabled={selectedItem.locked} onChange={(value) => patchSelected({ height: clamp(value, .02, 2.6) })} /><div className="field color-field"><label htmlFor="color">Finish</label><div className="color-input"><input id="color" type="color" value={selectedItem.color} disabled={selectedItem.locked} onChange={(event) => patchSelected({ color: event.target.value })} /><span>{selectedItem.color.toUpperCase()}</span></div></div></div>
               <div className="position-row"><span>POSITION</span><span>{selectedItem.x.toFixed(2)} m / {selectedItem.z.toFixed(2)} m</span><button onClick={toggleLock}>{selectedItem.locked ? <><Unlock size={14} /> Unlock</> : <><KeyRound size={14} /> Lock piece</>}</button></div>
+            </>}
             </>}
           </details>
 
