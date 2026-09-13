@@ -32,11 +32,19 @@ import {
   findSpace,
   issues,
   makeItem,
+  normalizeLayout,
   preset,
+  wallRect,
+  walls,
   type Item,
   type Kind,
   type Layout,
   type Proposal,
+  type DecorationConfig,
+  type DecorationKind,
+  type DoorConfig,
+  type Wall,
+  type WindowConfig,
 } from '../shared/layout';
 
 const STORAGE_KEY = 'roomshift-layout-v1';
@@ -46,8 +54,8 @@ function safeInitialLayout(): Layout {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      const parsed = JSON.parse(saved) as Layout;
-      if (parsed && Array.isArray(parsed.items) && typeof parsed.width === 'number') return parsed;
+      const parsed = normalizeLayout(JSON.parse(saved));
+      if (parsed && Array.isArray(parsed.items)) return parsed;
     }
   } catch {
     // A malformed local snapshot should never keep the studio from opening.
@@ -62,6 +70,55 @@ function itemLabel(item?: Item | null) {
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
+}
+
+const wallNames: Record<Wall, string> = { north: 'Back / north', south: 'Front / south', east: 'Right / east', west: 'Left / west' };
+const decorationNames: Record<DecorationKind, string> = { painting: 'Painting', mirror: 'Mirror', 'wall-shelf': 'Wall shelf', 'wall-plant': 'Wall plant' };
+
+function downloadDataUrl(dataUrl: string, filename: string) {
+  const link = document.createElement('a');
+  link.href = dataUrl;
+  link.download = filename;
+  link.click();
+}
+
+function drawPlanImage(layout: Layout) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1200;
+  canvas.height = 900;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('2D export is unavailable in this browser.');
+  const pad = 92;
+  const scale = Math.min((canvas.width - pad * 2) / layout.width, (canvas.height - pad * 2) / layout.depth);
+  const px = (x: number) => canvas.width / 2 + x * scale;
+  const pz = (z: number) => canvas.height / 2 + z * scale;
+  ctx.fillStyle = '#f6f3ed'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#fffdf8'; ctx.fillRect(px(-layout.width / 2), pz(-layout.depth / 2), layout.width * scale, layout.depth * scale);
+  ctx.strokeStyle = '#a59e92'; ctx.lineWidth = 8; ctx.strokeRect(px(-layout.width / 2), pz(-layout.depth / 2), layout.width * scale, layout.depth * scale);
+  const drawWallFeature = (feature: { x: number; z: number; width: number; depth: number }, color: string) => {
+    ctx.fillStyle = color;
+    ctx.fillRect(px(feature.x - feature.width / 2), pz(feature.z - feature.depth / 2), feature.width * scale, feature.depth * scale);
+  };
+  for (const window of layout.windows) drawWallFeature(wallRect(layout, window.wall, window.offset, window.width, .12), '#b8d2d0');
+  drawWallFeature(doorZoneForExport(layout), '#c89a68');
+  for (const item of layout.items) {
+    ctx.save();
+    ctx.translate(px(item.x), pz(item.z));
+    ctx.rotate(item.rotation * Math.PI / 180);
+    ctx.fillStyle = item.color;
+    ctx.globalAlpha = item.kind === 'rug' ? .58 : .92;
+    ctx.fillRect(-item.width * scale / 2, -item.depth * scale / 2, item.width * scale, item.depth * scale);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = item.kind === 'rug' ? '#9b8d75' : '#62594d'; ctx.lineWidth = 2; ctx.strokeRect(-item.width * scale / 2, -item.depth * scale / 2, item.width * scale, item.depth * scale);
+    ctx.restore();
+  }
+  ctx.fillStyle = '#5d5a53'; ctx.font = '600 24px Arial'; ctx.fillText('RoomShift · 2D room plan', 42, 48);
+  ctx.fillStyle = '#8e877c'; ctx.font = '16px monospace'; ctx.fillText(`${layout.width.toFixed(1)} m × ${layout.depth.toFixed(1)} m`, 43, 73);
+  return canvas.toDataURL('image/png');
+}
+
+function doorZoneForExport(layout: Layout) {
+  return wallRect(layout, layout.door.wall, layout.door.offset, layout.door.width, .13);
 }
 
 function App() {
@@ -81,6 +138,7 @@ function App() {
   const [checksRun, setChecksRun] = useState(true);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const layoutVersion = useRef(0);
+  const last3DImage = useRef<string | null>(null);
 
   const selectedItem = useMemo(() => layout.items.find((item) => item.id === selected) ?? null, [layout, selected]);
   const layoutChecks = useMemo(() => checks(layout), [layout]);
@@ -98,6 +156,17 @@ function App() {
       // Persistence is best effort in private browsing contexts.
     }
   }, [layout]);
+
+  useEffect(() => {
+    if (view !== '3D') return;
+    const frame = requestAnimationFrame(() => {
+      const canvas = document.querySelector('.room-canvas-wrap canvas') as HTMLCanvasElement | null;
+      if (canvas) {
+        try { last3DImage.current = canvas.toDataURL('image/png'); } catch { /* WebGL capture is best effort. */ }
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [layout, proposal, view, zoom, resetCamera]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -236,11 +305,49 @@ function App() {
     commit(next, 'Room dimensions updated.');
   }
 
+  function commitArchitecture(next: Layout, message: string) {
+    const nextIssues = issues(next);
+    commit(next, message);
+    if (nextIssues.length) setNotice({ tone: 'warning', text: `${message} Check layout · ${nextIssues[0]}` });
+  }
+
+  function patchDoor(patch: Partial<DoorConfig>) {
+    commitArchitecture({ ...layout, door: { ...layout.door, ...patch } }, 'Door configuration updated.');
+  }
+
+  function addWindow() {
+    const id = `window-${Date.now()}`;
+    const window: WindowConfig = { id, wall: 'north', offset: 0, width: 1.4, sill: 1.05, height: 1.2, clearance: .45 };
+    commitArchitecture({ ...layout, windows: [...layout.windows, window] }, 'Window added.');
+  }
+
+  function patchWindow(id: string, patch: Partial<WindowConfig>) {
+    commitArchitecture({ ...layout, windows: layout.windows.map((window) => window.id === id ? { ...window, ...patch } : window) }, 'Window configuration updated.');
+  }
+
+  function removeWindow(id: string) {
+    commitArchitecture({ ...layout, windows: layout.windows.filter((window) => window.id !== id) }, 'Window removed.');
+  }
+
+  function addDecoration(kind: DecorationKind) {
+    const id = `${kind}-${Date.now()}`;
+    const decoration: DecorationConfig = { id, kind, wall: 'north', offset: 0, width: kind === 'mirror' ? .72 : .47, height: kind === 'wall-shelf' ? .28 : .63, color: kind === 'mirror' ? '#b4c9c2' : '#b9825c' };
+    commitArchitecture({ ...layout, decorations: [...layout.decorations, decoration] }, `${decorationNames[kind]} added.`);
+  }
+
+  function patchDecoration(id: string, patch: Partial<DecorationConfig>) {
+    commitArchitecture({ ...layout, decorations: layout.decorations.map((decoration) => decoration.id === id ? { ...decoration, ...patch } : decoration) }, 'Wall decoration updated.');
+  }
+
+  function removeDecoration(id: string) {
+    commitArchitecture({ ...layout, decorations: layout.decorations.filter((decoration) => decoration.id !== id) }, 'Wall decoration removed.');
+  }
+
   function runLayoutChecks() {
     const latest = checks(layout);
     setChecksRun(true);
     const count = Object.values(latest).flat().length;
-    setNotice({ tone: count ? 'warning' : 'success', text: count ? `${count} layout issue${count === 1 ? '' : 's'} need review.` : 'Layout checked · room boundaries, overlap, and door clearance all pass.' });
+    setNotice({ tone: count ? 'warning' : 'success', text: count ? `${count} layout issue${count === 1 ? '' : 's'} need review.` : 'Layout checked · boundaries, overlaps, door, and window clearances all pass.' });
   }
 
   function saveRoom() {
@@ -254,7 +361,13 @@ function App() {
       link.download = 'roomshift-layout.json';
       link.click();
       URL.revokeObjectURL(url);
-      setNotice({ tone: 'success', text: 'Layout saved locally and exported as roomshift-layout.json.' });
+      const canvas = document.querySelector('.room-canvas-wrap canvas') as HTMLCanvasElement | null;
+      if (view === '3D' && canvas) {
+        try { last3DImage.current = canvas.toDataURL('image/png'); } catch { /* keep the last captured frame */ }
+      }
+      downloadDataUrl(drawPlanImage(layout), 'roomshift-2d.png');
+      if (last3DImage.current) downloadDataUrl(last3DImage.current, 'roomshift-3d.png');
+      setNotice({ tone: 'success', text: last3DImage.current ? 'Layout saved · exported 2D, 3D, and JSON files.' : 'Layout saved · exported the 2D plan and JSON. Visit 3D once to capture its image.' });
     } catch {
       setNotice({ tone: 'error', text: 'Could not save this layout in the current browser.' });
     }
@@ -387,7 +500,7 @@ function App() {
           </div>
           <div className="room-canvas-wrap">
             <Room
-              layout={proposal ? { width: layout.width, depth: layout.depth, items: proposal.items } : layout}
+              layout={proposal ? { ...layout, items: proposal.items } : layout}
               selected={selected}
               onSelect={select}
               onMove={moveItem}
@@ -433,6 +546,7 @@ function App() {
             <CheckRow label="Room boundaries" detail={layoutChecks.boundary[0] || 'Every piece stays inside the room'} ok={!layoutChecks.boundary.length} />
             <CheckRow label="Furniture overlap" detail={layoutChecks.overlap[0] || 'Solid pieces have breathing room'} ok={!layoutChecks.overlap.length} />
             <CheckRow label="Door clearance" detail={layoutChecks.door[0] || 'Entry zone remains clear'} ok={!layoutChecks.door.length} />
+            <CheckRow label="Window clearance" detail={layoutChecks.barrier[0] || 'Tall pieces stay clear of the windows'} ok={!layoutChecks.barrier.length} />
             <p className="checks-note">Guidance for this layout, not a building-code or accessibility certification.</p>
           </section>
 
@@ -440,6 +554,36 @@ function App() {
             <div className="section-title"><div><span className="eyebrow">FIXED ARCHITECTURE</span><h2>Room dimensions</h2></div><span className="dimension-note">meters</span></div>
             <div className="room-size-fields"><RoomField label="Width" value={layout.width} onChange={(value) => changeRoomDimension('width', value)} /><RoomField label="Depth" value={layout.depth} onChange={(value) => changeRoomDimension('depth', value)} /></div>
             <p className="checks-note">Door and window stay fixed as the room grows.</p>
+          </section>
+
+          <section className="panel architecture-panel">
+            <div className="section-title"><div><span className="eyebrow">FIXED ARCHITECTURE</span><h2>Doors, windows & walls</h2></div><span className="dimension-note">edit</span></div>
+            <div className="architecture-section">
+              <span className="mini-label">ENTRY DOOR</span>
+              <div className="arch-row">
+                <ArchSelect label="Wall" value={layout.door.wall} options={walls.map((wall) => [wall, wallNames[wall]])} onChange={(value) => patchDoor({ wall: value as Wall })} />
+                <ArchNumber label="Offset" value={layout.door.offset} min={-5} max={5} step={.1} onChange={(value) => patchDoor({ offset: value })} />
+              </div>
+              <div className="arch-row">
+                <ArchNumber label="Width" value={layout.door.width} min={.6} max={2.4} step={.1} onChange={(value) => patchDoor({ width: clamp(value, .6, 2.4) })} />
+                <ArchNumber label="Clearance" value={layout.door.clearance} min={.6} max={2.4} step={.1} onChange={(value) => patchDoor({ clearance: clamp(value, .6, 2.4) })} />
+              </div>
+            </div>
+            <div className="arch-list-heading"><span>WINDOWS · {layout.windows.length}</span><button onClick={addWindow}><Plus size={12} /> Add window</button></div>
+            {layout.windows.map((window) => <div className="arch-item" key={window.id}>
+              <ArchSelect label="Wall" value={window.wall} options={walls.map((wall) => [wall, wallNames[wall]])} onChange={(value) => patchWindow(window.id, { wall: value as Wall })} />
+              <ArchNumber label="Offset" value={window.offset} min={-5} max={5} step={.1} onChange={(value) => patchWindow(window.id, { offset: value })} />
+              <button className="arch-delete" aria-label={`Remove ${window.id}`} onClick={() => removeWindow(window.id)}><Trash2 size={13} /></button>
+              <ArchNumber label="Width" value={window.width} min={.4} max={4} step={.1} onChange={(value) => patchWindow(window.id, { width: clamp(value, .4, 4) })} />
+              <ArchNumber label="Sill height" value={window.sill} min={.3} max={2.4} step={.05} onChange={(value) => patchWindow(window.id, { sill: clamp(value, .3, 2.4) })} />
+            </div>)}
+            <div className="arch-list-heading"><span>WALL DECOR · {layout.decorations.length}</span><div className="arch-add-buttons"><button onClick={() => addDecoration('painting')}>+ Painting</button><button onClick={() => addDecoration('mirror')}>+ Mirror</button><button onClick={() => addDecoration('wall-shelf')}>+ Shelf</button></div></div>
+            {layout.decorations.map((decoration) => <div className="arch-item decoration-item" key={decoration.id}>
+              <ArchSelect label="Type" value={decoration.kind} options={Object.entries(decorationNames) as [string, string][]} onChange={(value) => patchDecoration(decoration.id, { kind: value as DecorationKind })} />
+              <ArchSelect label="Wall" value={decoration.wall} options={walls.map((wall) => [wall, wallNames[wall]])} onChange={(value) => patchDecoration(decoration.id, { wall: value as Wall })} />
+              <button className="arch-delete" aria-label={`Remove ${decoration.id}`} onClick={() => removeDecoration(decoration.id)}><Trash2 size={13} /></button>
+              <ArchNumber label="Offset" value={decoration.offset} min={-5} max={5} step={.1} onChange={(value) => patchDecoration(decoration.id, { offset: value })} />
+            </div>)}
           </section>
 
           <details className="panel inspector-card" open>
@@ -461,6 +605,14 @@ function App() {
 
 function CheckRow({ label, detail, ok }: { label: string; detail: string; ok: boolean }) {
   return <div className={`check-row ${ok ? 'ok' : 'issue'}`}><span className="check-icon">{ok ? <Check size={14} /> : <span>!</span>}</span><span className="check-copy"><strong>{label}</strong><small>{detail}</small></span><span className="check-state">{ok ? 'PASS' : 'REVIEW'}</span></div>;
+}
+
+function ArchNumber({ label, value, min, max, step, onChange }: { label: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void }) {
+  return <label className="arch-field"><span>{label}</span><input type="number" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} /></label>;
+}
+
+function ArchSelect({ label, value, options, onChange }: { label: string; value: string; options: [string, string][]; onChange: (value: string) => void }) {
+  return <label className="arch-field"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}>{options.map(([option, name]) => <option key={option} value={option}>{name}</option>)}</select></label>;
 }
 
 function Field({ label, value, disabled, onChange }: { label: string; value: number; disabled: boolean; onChange: (value: number) => void }) {

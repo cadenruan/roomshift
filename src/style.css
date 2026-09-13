@@ -235,12 +235,33 @@ h1, h2 { margin-top: 0; font-size: 22px; font-weight: 600; letter-spacing: -.035
 .inspector-card:not([open]) { border-color: transparent; background: transparent; }
 .inspector-panel > .inspector-card { order: 1; flex: 0 0 auto; }
 .inspector-panel > .room-size-panel { order: 2; flex: 0 0 auto; }
-.inspector-panel > .ai-panel { order: 3; flex: 0 0 auto; }
-.inspector-panel > .checks-panel { order: 4; flex: 0 0 auto; }
-.inspector-panel > .notice { order: 5; flex: 0 0 auto; }
+.inspector-panel > .architecture-panel { order: 3; flex: 0 0 auto; }
+.inspector-panel > .ai-panel { order: 4; flex: 0 0 auto; }
+.inspector-panel > .checks-panel { order: 5; flex: 0 0 auto; }
+.inspector-panel > .notice { order: 6; flex: 0 0 auto; }
 .check-heading-actions { display: flex; align-items: center; gap: 8px; }
 .check-button { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 9px; border: 1px solid rgba(49,127,128,.25); border-radius: 7px; background: #e1efea; color: #2f7877; font-size: 10px; font-weight: 600; }
 .check-button:hover { border-color: rgba(49,127,128,.55); background: #d6e9e2; }
+.architecture-panel { padding: 17px 17px 15px; }
+.architecture-panel .section-title { margin-bottom: 13px; }
+.architecture-section { padding-top: 11px; border-top: 1px solid var(--line); }
+.mini-label, .arch-list-heading > span { color: #aaa195; font: 9px 'DM Mono', monospace; letter-spacing: .08em; }
+.arch-row { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 8px; }
+.arch-field { display: grid; gap: 4px; min-width: 0; }
+.arch-field > span { color: #9d9f97; font: 8px 'DM Mono', monospace; text-transform: uppercase; }
+.arch-field input, .arch-field select { width: 100%; height: 28px; min-width: 0; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; outline: 0; background: rgba(255,255,255,.62); color: #666a64; font-size: 10px; }
+.arch-field input:focus, .arch-field select:focus { border-color: rgba(49,127,128,.5); }
+.arch-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 15px; padding-top: 12px; border-top: 1px dashed rgba(65,63,53,.14); }
+.arch-list-heading button, .arch-add-buttons button { display: inline-flex; align-items: center; gap: 3px; padding: 4px 6px; border: 1px solid rgba(49,127,128,.2); border-radius: 6px; background: #eef5f0; color: #347979; font-size: 8px; }
+.arch-list-heading button:hover, .arch-add-buttons button:hover { border-color: rgba(49,127,128,.5); background: #e2efea; }
+.arch-item { display: grid; grid-template-columns: 1fr 1fr 25px; gap: 7px; margin-top: 9px; padding-bottom: 9px; border-bottom: 1px solid rgba(65,63,53,.08); }
+.arch-item .arch-field:nth-of-type(3) { grid-column: 1; }
+.arch-item .arch-field:nth-of-type(4) { grid-column: 2; }
+.arch-delete { align-self: end; display: grid; place-items: center; width: 25px; height: 28px; border: 1px solid rgba(174,126,110,.18); border-radius: 6px; background: #fff8f4; color: #ae7e6e; }
+.arch-delete:hover { border-color: rgba(174,126,110,.5); background: #fcedea; }
+.arch-add-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.decoration-item { grid-template-columns: 1fr 1fr 25px; }
+.decoration-item .arch-field:nth-of-type(3) { grid-column: 1 / 3; }
 @media (max-width: 1200px) {
   .workspace { grid-template-columns: 225px minmax(0,1fr) 295px; gap: 10px; }
   .brand { font-size: 34px; }
