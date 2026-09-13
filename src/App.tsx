@@ -148,6 +148,7 @@ function App() {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const layoutVersion = useRef(0);
   const last3DImage = useRef<string | null>(null);
+  const last2DImage = useRef<string | null>(null);
 
   const selectedItem = useMemo(() => layout.items.find((item) => item.id === selected) ?? null, [layout, selected]);
   const selectedWindow = useMemo(() => selectedArchitecture?.type === 'window' ? layout.windows.find((window) => window.id === selectedArchitecture.id) ?? null : null, [layout.windows, selectedArchitecture]);
@@ -169,14 +170,22 @@ function App() {
   }, [layout]);
 
   useEffect(() => {
-    if (view !== '3D') return;
-    const frame = requestAnimationFrame(() => {
-      const canvas = document.querySelector('.room-canvas-wrap canvas') as HTMLCanvasElement | null;
-      if (canvas) {
-        try { last3DImage.current = canvas.toDataURL('image/png'); } catch { /* WebGL capture is best effort. */ }
+    const capture = () => {
+      const mainCanvas = document.querySelector('.room-main-canvas canvas') as HTMLCanvasElement | null;
+      const planCanvas = document.querySelector('.room-plan-canvas canvas') as HTMLCanvasElement | null;
+      if (mainCanvas) {
+        try {
+          if (view === '3D') last3DImage.current = mainCanvas.toDataURL('image/png');
+          if (view === '2D') last2DImage.current = mainCanvas.toDataURL('image/png');
+        } catch { /* WebGL capture is best effort. */ }
       }
-    });
-    return () => cancelAnimationFrame(frame);
+      if (planCanvas) {
+        try { last2DImage.current = planCanvas.toDataURL('image/png'); } catch { /* Hidden plan capture is best effort. */ }
+      }
+    };
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => { secondFrame = requestAnimationFrame(capture); });
+    return () => { cancelAnimationFrame(firstFrame); cancelAnimationFrame(secondFrame); };
   }, [layout, proposal, view, zoom, resetCamera]);
 
   useEffect(() => {
@@ -315,13 +324,29 @@ function App() {
   }
 
   function changeRoomDimension(axis: 'width' | 'depth', value: number) {
-    const next = { ...layout, [axis]: clamp(value, 3, 10) } as Layout;
+    if (!Number.isFinite(value)) return;
+    const nextValue = clamp(value, 3, 10);
+    if (nextValue < layout[axis]) {
+      setNotice({ tone: 'warning', text: `Room ${axis === 'width' ? 'width' : 'length'} cannot be reduced here. Keep the new value at least ${layout[axis].toFixed(1)} m.` });
+      return;
+    }
+    const next = { ...layout, [axis]: nextValue } as Layout;
     const nextIssues = issues(next);
     if (nextIssues.length) {
       setNotice({ tone: 'warning', text: `Room size blocked · ${nextIssues[0]}` });
       return;
     }
     commit(next, 'Room dimensions updated.');
+  }
+
+  function deleteAllItems() {
+    if (!layout.items.length) {
+      setNotice({ tone: 'warning', text: 'The room is already empty.' });
+      return;
+    }
+    if (!window.confirm('Delete all furniture from this room?')) return;
+    commit({ ...layout, items: [] }, 'All furniture removed from the room.');
+    setSelected(null);
   }
 
   function commitArchitecture(next: Layout, message: string) {
@@ -398,11 +423,18 @@ function App() {
       link.download = 'roomshift-layout.json';
       link.click();
       URL.revokeObjectURL(url);
-      const canvas = document.querySelector('.room-canvas-wrap canvas') as HTMLCanvasElement | null;
-      if (view === '3D' && canvas) {
-        try { last3DImage.current = canvas.toDataURL('image/png'); } catch { /* keep the last captured frame */ }
+      const mainCanvas = document.querySelector('.room-main-canvas canvas') as HTMLCanvasElement | null;
+      if (mainCanvas) {
+        try {
+          if (view === '3D') last3DImage.current = mainCanvas.toDataURL('image/png');
+          if (view === '2D') last2DImage.current = mainCanvas.toDataURL('image/png');
+        } catch { /* keep the last captured frame */ }
       }
-      downloadDataUrl(drawPlanImage(layout), 'roomshift-2d.png');
+      const planCanvas = document.querySelector('.room-plan-canvas canvas') as HTMLCanvasElement | null;
+      if (!last2DImage.current && planCanvas) {
+        try { last2DImage.current = planCanvas.toDataURL('image/png'); } catch { /* use the deterministic fallback below */ }
+      }
+      downloadDataUrl(last2DImage.current || drawPlanImage(layout), 'roomshift-2d.png');
       if (last3DImage.current) downloadDataUrl(last3DImage.current, 'roomshift-3d.png');
       setNotice({ tone: 'success', text: last3DImage.current ? 'Layout saved · exported 2D, 3D, and JSON files.' : 'Layout saved · exported the 2D plan and JSON. Visit 3D once to capture its image.' });
     } catch {
@@ -551,7 +583,27 @@ function App() {
               preview={Boolean(proposal)}
               showClearance={showClearance}
               transparentFrontWalls={transparentFrontWalls}
+              canvasClassName="room-main-canvas"
             />
+            <div className="plan-capture-canvas" aria-hidden="true">
+              <Room
+                layout={proposal ? { ...layout, items: proposal.items } : layout}
+                selected={null}
+                selectedArchitecture={null}
+                onSelect={() => undefined}
+                onSelectArchitecture={() => undefined}
+                onMove={() => undefined}
+                onArchitectureChange={() => undefined}
+                onAdd={() => undefined}
+                view="2D"
+                zoom={zoom}
+                reset={resetCamera}
+                preview
+                showClearance={false}
+                transparentFrontWalls={false}
+                canvasClassName="room-plan-canvas"
+              />
+            </div>
             <div className="canvas-legend"><span className="legend-swatch selected-swatch" /> Selected <span className="legend-swatch fixed-swatch" /> Fixed architecture</div>
             {proposal && (
               <div className="proposal-banner">
@@ -567,7 +619,7 @@ function App() {
           </div>
           <div className="stage-footer">
             <div><span className="footer-kicker">EDITING TIP</span><span>Drag pieces on the floor · R to rotate · ⌘ Z to undo</span></div>
-            <div className="stage-footer-actions"><button className="clearance-toggle" onClick={() => setShowClearance((value) => !value)}><DoorOpen size={15} /> {showClearance ? 'Hide' : 'Show'} door clearance</button><button className="clearance-toggle" onClick={() => setTransparentFrontWalls((value) => !value)}>{transparentFrontWalls ? <EyeOff size={15} /> : <Eye size={15} />} {transparentFrontWalls ? 'Show' : 'See through'} front walls</button></div>
+            <div className="stage-footer-actions"><button className="clearance-toggle" onClick={() => setShowClearance((value) => !value)}><DoorOpen size={15} /> {showClearance ? 'Hide' : 'Show'} door clearance</button><button className="clearance-toggle" onClick={() => setTransparentFrontWalls((value) => !value)}>{transparentFrontWalls ? <EyeOff size={15} /> : <Eye size={15} />} {transparentFrontWalls ? 'Show' : 'See through'} front walls</button><button className="clearance-toggle destructive-toggle" onClick={deleteAllItems}><Trash2 size={15} /> Clear furniture</button></div>
           </div>
         </section>
 
@@ -596,8 +648,8 @@ function App() {
 
           <section className={`panel room-size-panel ${activeRail !== 'edit' ? 'rail-hidden' : ''}`}>
             <div className="section-title"><div><span className="eyebrow">FIXED ARCHITECTURE</span><h2>Room dimensions</h2></div><span className="dimension-note">meters</span></div>
-            <div className="room-size-fields"><RoomField label="Width" value={layout.width} onChange={(value) => changeRoomDimension('width', value)} /><RoomField label="Depth" value={layout.depth} onChange={(value) => changeRoomDimension('depth', value)} /></div>
-            <p className="checks-note">Door and window stay fixed as the room grows.</p>
+            <div className="room-size-fields"><RoomField label="Width" value={layout.width} onChange={(value) => changeRoomDimension('width', value)} /><RoomField label="Length" value={layout.depth} onChange={(value) => changeRoomDimension('depth', value)} /></div>
+            <p className="checks-note">Door and windows stay fixed as the room grows.</p>
           </section>
 
           <section className={`panel architecture-panel ${activeRail !== 'architecture' ? 'rail-hidden' : ''}`}>
@@ -669,7 +721,18 @@ function Field({ label, value, disabled, onChange }: { label: string; value: num
 }
 
 function RoomField({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
-  return <div className="field"><label htmlFor={`room-${label}`}>{label}</label><div className="number-input"><input id={`room-${label}`} type="number" min="3" max="10" step="0.1" value={value} onChange={(event) => onChange(Number(event.target.value) || value)} /><span>m</span></div></div>;
+  const [draft, setDraft] = useState(value.toFixed(1));
+  useEffect(() => setDraft(value.toFixed(1)), [value]);
+  function update(raw: string) {
+    setDraft(raw);
+  }
+  function finish() {
+    const next = Number(draft);
+    if (!draft.trim() || !Number.isFinite(next)) setDraft(value.toFixed(1));
+    else if (next < value) { onChange(next); setDraft(value.toFixed(1)); }
+    else onChange(next);
+  }
+  return <div className="field"><label htmlFor={`room-${label}`}>{label}</label><div className="number-input"><input id={`room-${label}`} type="number" min="3" max="10" step="0.1" value={draft} onChange={(event) => update(event.target.value)} onBlur={finish} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} /><span>m</span></div></div>;
 }
 
 export default App;

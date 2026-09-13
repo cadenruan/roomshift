@@ -278,6 +278,10 @@ h1, h2 { margin-top: 0; font-size: 22px; font-weight: 600; letter-spacing: -.035
 .arch-object-summary button:hover { border-color: rgba(49,127,128,.4); color: #2f7877; }
 .stage-footer { opacity: 1; }
 .stage-footer-actions { display: flex; align-items: center; gap: 8px; }
+.plan-capture-canvas { position: absolute; left: -2000px; top: 0; width: 448px; height: 827px; pointer-events: none; opacity: 0; }
+.plan-capture-canvas > div { width: 100%; height: 100%; }
+.destructive-toggle { color: #ae6c57; }
+.destructive-toggle:hover { color: #9b4f3c; }
 @media (max-width: 1200px) {
   .workspace { grid-template-columns: 225px minmax(0,1fr) 295px; gap: 10px; }
   .brand { font-size: 34px; }
