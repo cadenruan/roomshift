@@ -568,6 +568,9 @@ function App() {
                 <ArchNumber label="Width" value={layout.door.width} min={.6} max={2.4} step={.1} onChange={(value) => patchDoor({ width: clamp(value, .6, 2.4) })} />
                 <ArchNumber label="Clearance" value={layout.door.clearance} min={.6} max={2.4} step={.1} onChange={(value) => patchDoor({ clearance: clamp(value, .6, 2.4) })} />
               </div>
+              <div className="arch-row">
+                <ArchSelect label="Swing" value={layout.door.swing} options={[['in', 'Into room'], ['out', 'Out of room']]} onChange={(value) => patchDoor({ swing: value as DoorConfig['swing'] })} />
+              </div>
             </div>
             <div className="arch-list-heading"><span>WINDOWS · {layout.windows.length}</span><button onClick={addWindow}><Plus size={12} /> Add window</button></div>
             {layout.windows.map((window) => <div className="arch-item" key={window.id}>
@@ -576,8 +579,10 @@ function App() {
               <button className="arch-delete" aria-label={`Remove ${window.id}`} onClick={() => removeWindow(window.id)}><Trash2 size={13} /></button>
               <ArchNumber label="Width" value={window.width} min={.4} max={4} step={.1} onChange={(value) => patchWindow(window.id, { width: clamp(value, .4, 4) })} />
               <ArchNumber label="Sill height" value={window.sill} min={.3} max={2.4} step={.05} onChange={(value) => patchWindow(window.id, { sill: clamp(value, .3, 2.4) })} />
+              <ArchNumber label="Height" value={window.height} min={.3} max={2.5} step={.05} onChange={(value) => patchWindow(window.id, { height: clamp(value, .3, 2.5) })} />
+              <ArchNumber label="Clear zone" value={window.clearance} min={.1} max={1.2} step={.05} onChange={(value) => patchWindow(window.id, { clearance: clamp(value, .1, 1.2) })} />
             </div>)}
-            <div className="arch-list-heading"><span>WALL DECOR · {layout.decorations.length}</span><div className="arch-add-buttons"><button onClick={() => addDecoration('painting')}>+ Painting</button><button onClick={() => addDecoration('mirror')}>+ Mirror</button><button onClick={() => addDecoration('wall-shelf')}>+ Shelf</button></div></div>
+            <div className="arch-list-heading"><span>WALL DECOR · {layout.decorations.length}</span><div className="arch-add-buttons"><button onClick={() => addDecoration('painting')}>+ Painting</button><button onClick={() => addDecoration('mirror')}>+ Mirror</button><button onClick={() => addDecoration('wall-shelf')}>+ Shelf</button><button onClick={() => addDecoration('wall-plant')}>+ Plant</button></div></div>
             {layout.decorations.map((decoration) => <div className="arch-item decoration-item" key={decoration.id}>
               <ArchSelect label="Type" value={decoration.kind} options={Object.entries(decorationNames) as [string, string][]} onChange={(value) => patchDecoration(decoration.id, { kind: value as DecorationKind })} />
               <ArchSelect label="Wall" value={decoration.wall} options={walls.map((wall) => [wall, wallNames[wall]])} onChange={(value) => patchDecoration(decoration.id, { wall: value as Wall })} />
@@ -608,7 +613,7 @@ function CheckRow({ label, detail, ok }: { label: string; detail: string; ok: bo
 }
 
 function ArchNumber({ label, value, min, max, step, onChange }: { label: string; value: number; min: number; max: number; step: number; onChange: (value: number) => void }) {
-  return <label className="arch-field"><span>{label}</span><input type="number" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} /></label>;
+  return <label className="arch-field"><span>{label}</span><input type="number" value={value} min={min} max={max} step={step} onChange={(event) => { const next = Number(event.target.value); if (Number.isFinite(next)) onChange(next); }} /></label>;
 }
 
 function ArchSelect({ label, value, options, onChange }: { label: string; value: string; options: [string, string][]; onChange: (value: string) => void }) {
