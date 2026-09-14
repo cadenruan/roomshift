@@ -28,6 +28,7 @@ import {
   X,
 } from 'lucide-react';
 import Room, { Thumbnail } from './Room';
+import { buildLocalProposal } from './localPlanner';
 import {
   catalog,
   checks,
@@ -55,6 +56,7 @@ const STORAGE_KEY = 'roomshift-layout-v1';
 const promptStarter = 'Give both roommates a study area and keep the middle open.';
 type Rail = 'edit' | 'ai' | 'architecture' | 'checks';
 type ArchitectureSelection = { type: 'window' | 'decoration'; id: string } | null;
+type AppProposal = Proposal & { id: string; source: 'local' | 'server'; baseVersion: number };
 
 function safeInitialLayout(): Layout {
   try {
@@ -86,6 +88,10 @@ function downloadDataUrl(dataUrl: string, filename: string) {
   link.href = dataUrl;
   link.download = filename;
   link.click();
+}
+
+function hasLocalPlannerService() {
+  return ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
 }
 
 function drawPlanImage(layout: Layout) {
@@ -136,7 +142,7 @@ function App() {
   const [resetCamera, setResetCamera] = useState(0);
   const [prompt, setPrompt] = useState(promptStarter);
   const [pending, setPending] = useState(false);
-  const [proposal, setProposal] = useState<(Proposal & { id: string }) | null>(null);
+  const [proposal, setProposal] = useState<AppProposal | null>(null);
   const [notice, setNotice] = useState<{ tone: 'success' | 'warning' | 'error'; text: string } | null>(null);
   const [showClearance, setShowClearance] = useState(false);
   const [transparentFrontWalls, setTransparentFrontWalls] = useState(false);
@@ -458,6 +464,16 @@ function App() {
     setNotice(null);
     const startingVersion = layoutVersion.current;
     try {
+      if (!hasLocalPlannerService()) {
+        const data = buildLocalProposal(layout, prompt.trim());
+        if (data.status === 'impossible') {
+          setNotice({ tone: 'warning', text: data.summary });
+          return;
+        }
+        setProposal({ ...data, id: `local-${Date.now()}`, source: 'local', baseVersion: startingVersion });
+        setNotice({ tone: 'success', text: 'Proposal ready. Review the highlighted arrangement before applying.' });
+        return;
+      }
       const token = await getToken();
       const response = await fetch('/api/propose', {
         method: 'POST',
@@ -476,7 +492,7 @@ function App() {
         setNotice({ tone: 'warning', text: data.summary });
         return;
       }
-      setProposal(data as Proposal & { id: string });
+      setProposal({ ...(data as Proposal & { id: string }), source: 'server', baseVersion: startingVersion });
       setNotice({ tone: 'success', text: 'Proposal ready. Review the highlighted arrangement before applying.' });
     } catch (error) {
       setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'The local planner is unavailable.' });
@@ -487,6 +503,15 @@ function App() {
 
   async function applyProposal() {
     if (!proposal) return;
+    if (proposal.source === 'local') {
+      if (layoutVersion.current !== proposal.baseVersion) {
+        setNotice({ tone: 'warning', text: 'The room changed while the proposal was open. Generate a fresh arrangement.' });
+        return;
+      }
+      commit({ ...layout, items: proposal.items }, 'AI arrangement applied. Undo is available if you want the previous room back.');
+      setProposal(null);
+      return;
+    }
     try {
       const token = await getToken();
       const response = await fetch('/api/apply', {
@@ -504,7 +529,7 @@ function App() {
   }
 
   async function cancelProposal() {
-    if (proposal) {
+    if (proposal?.source === 'server') {
       const token = sessionToken;
       if (token) fetch(`/api/proposal/${proposal.id}`, { method: 'DELETE', headers: { 'x-roomshift-token': token } }).catch(() => undefined);
     }
@@ -629,7 +654,7 @@ function App() {
           </nav>
           <section className={`panel ai-panel ${activeRail !== 'ai' ? 'rail-hidden' : ''}`}>
             <div className="ai-heading"><div className="ai-icon"><Sparkles size={19} /></div><div><span className="eyebrow">ROOMSHIFT AI</span><h2>AI layout copilot</h2></div><span className="ai-pulse" /></div>
-            <p className="ai-intro">Describe the feeling you want. Codex will explore a bounded, collision-checked arrangement while preserving anything locked.</p>
+            <p className="ai-intro">Describe the feeling you want. RoomShift will generate a bounded, collision-checked arrangement while preserving anything locked.</p>
             <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={3} placeholder="Try: keep the middle open…" disabled={pending || Boolean(proposal)} />
             <div className="prompt-chips"><button onClick={() => setPrompt('Keep the middle open and move desks toward the window.')} disabled={pending || Boolean(proposal)}>open center</button><button onClick={() => setPrompt('Give both roommates a study area near the window.')} disabled={pending || Boolean(proposal)}>study zones</button></div>
             <button className="ai-button" onClick={rearrange} disabled={pending || Boolean(proposal) || !prompt.trim()}>{pending ? <><span className="spinner" /> Thinking with Codex…</> : <><WandSparkles size={17} /> Rearrange with AI</>}</button>
