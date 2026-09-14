@@ -6,7 +6,7 @@ on:
     paths:
       - 'worker/**'
       - 'shared/**'
-      - 'wrangler.jsonc'
+      - 'wrangler.toml'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/deploy-ai-worker.yml'
@@ -27,4 +27,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4.131.2'
           command: deploy
