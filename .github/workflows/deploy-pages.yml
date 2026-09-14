@@ -34,6 +34,8 @@ jobs:
         run: npm ci
 
       - name: Build RoomShift
+        env:
+          VITE_ROOMSHIFT_AI_URL: ${{ vars.ROOMSHIFT_AI_URL }}
         run: npm run build
 
       - name: Configure Pages

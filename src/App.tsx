@@ -28,7 +28,6 @@ import {
   X,
 } from 'lucide-react';
 import Room, { Thumbnail } from './Room';
-import { buildLocalProposal } from './localPlanner';
 import {
   catalog,
   checks,
@@ -54,6 +53,7 @@ import {
 
 const STORAGE_KEY = 'roomshift-layout-v1';
 const promptStarter = 'Give both roommates a study area and keep the middle open.';
+const AI_ENDPOINT = (import.meta.env.VITE_ROOMSHIFT_AI_URL || '').replace(/\/+$/, '');
 type Rail = 'edit' | 'ai' | 'architecture' | 'checks';
 type ArchitectureSelection = { type: 'window' | 'decoration'; id: string } | null;
 type AppProposal = Proposal & { id: string; source: 'local' | 'server'; baseVersion: number };
@@ -464,29 +464,22 @@ function App() {
     setNotice(null);
     const startingVersion = layoutVersion.current;
     try {
-      if (!hasLocalPlannerService()) {
-        const data = buildLocalProposal(layout, prompt.trim());
-        if (data.status === 'impossible') {
-          setNotice({ tone: 'warning', text: data.summary });
-          return;
-        }
-        setProposal({ ...data, id: `local-${Date.now()}`, source: 'local', baseVersion: startingVersion });
-        setNotice({ tone: 'success', text: 'Proposal ready. Review the highlighted arrangement before applying.' });
-        return;
-      }
-      const token = await getToken();
-      const response = await fetch('/api/propose', {
+      const local = hasLocalPlannerService();
+      if (!local && !AI_ENDPOINT) throw new Error('Cloudflare AI is not connected to this build yet. Set VITE_ROOMSHIFT_AI_URL and redeploy the site.');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (local) headers['x-roomshift-token'] = await getToken();
+      const response = await fetch(local ? '/api/propose' : `${AI_ENDPOINT}/api/propose`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-roomshift-token': token },
+        headers,
         body: JSON.stringify({ prompt: prompt.trim(), layout }),
       });
       const data = await response.json() as Proposal & { id?: string; error?: string; details?: string[] };
       if (layoutVersion.current !== startingVersion) {
-        setNotice({ tone: 'warning', text: 'The room changed while Codex was thinking. This proposal was discarded.' });
+        setNotice({ tone: 'warning', text: 'The room changed while RoomShift AI was thinking. This proposal was discarded.' });
         return;
       }
       if (!response.ok || !data.id) {
-        throw new Error(data.error || 'The local planner could not complete this arrangement.');
+        throw new Error(data.error || 'RoomShift AI could not complete this arrangement.');
       }
       if (data.status === 'impossible') {
         setNotice({ tone: 'warning', text: data.summary });
@@ -495,7 +488,7 @@ function App() {
       setProposal({ ...(data as Proposal & { id: string }), source: 'server', baseVersion: startingVersion });
       setNotice({ tone: 'success', text: 'Proposal ready. Review the highlighted arrangement before applying.' });
     } catch (error) {
-      setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'The local planner is unavailable.' });
+      setNotice({ tone: 'error', text: error instanceof Error ? error.message : 'RoomShift AI is unavailable.' });
     } finally {
       setPending(false);
     }
@@ -513,11 +506,16 @@ function App() {
       return;
     }
     try {
-      const token = await getToken();
-      const response = await fetch('/api/apply', {
+      const local = hasLocalPlannerService();
+      if (!local && !AI_ENDPOINT) throw new Error('Cloudflare AI is not connected to this build yet.');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (local) headers['x-roomshift-token'] = await getToken();
+      const response = await fetch(local ? '/api/apply' : `${AI_ENDPOINT}/api/apply`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-roomshift-token': token },
-        body: JSON.stringify({ id: proposal.id, layout }),
+        headers,
+        body: JSON.stringify(local
+          ? { id: proposal.id, layout }
+          : { layout, proposal: { status: proposal.status, summary: proposal.summary, items: proposal.items } }),
       });
       const data = await response.json() as { layout?: Layout; error?: string };
       if (!response.ok || !data.layout) throw new Error(data.error || 'This proposal is no longer valid.');
@@ -529,7 +527,7 @@ function App() {
   }
 
   async function cancelProposal() {
-    if (proposal?.source === 'server') {
+    if (proposal?.source === 'server' && hasLocalPlannerService()) {
       const token = sessionToken;
       if (token) fetch(`/api/proposal/${proposal.id}`, { method: 'DELETE', headers: { 'x-roomshift-token': token } }).catch(() => undefined);
     }
@@ -654,10 +652,10 @@ function App() {
           </nav>
           <section className={`panel ai-panel ${activeRail !== 'ai' ? 'rail-hidden' : ''}`}>
             <div className="ai-heading"><div className="ai-icon"><Sparkles size={19} /></div><div><span className="eyebrow">ROOMSHIFT AI</span><h2>AI layout copilot</h2></div><span className="ai-pulse" /></div>
-            <p className="ai-intro">Describe the feeling you want. RoomShift will generate a bounded, collision-checked arrangement while preserving anything locked.</p>
+            <p className="ai-intro">Describe the feeling you want. RoomShift AI will explore a bounded, collision-checked arrangement while preserving anything locked.</p>
             <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={3} placeholder="Try: keep the middle open…" disabled={pending || Boolean(proposal)} />
             <div className="prompt-chips"><button onClick={() => setPrompt('Keep the middle open and move desks toward the window.')} disabled={pending || Boolean(proposal)}>open center</button><button onClick={() => setPrompt('Give both roommates a study area near the window.')} disabled={pending || Boolean(proposal)}>study zones</button></div>
-            <button className="ai-button" onClick={rearrange} disabled={pending || Boolean(proposal) || !prompt.trim()}>{pending ? <><span className="spinner" /> Thinking with Codex…</> : <><WandSparkles size={17} /> Rearrange with AI</>}</button>
+            <button className="ai-button" onClick={rearrange} disabled={pending || Boolean(proposal) || !prompt.trim()}>{pending ? <><span className="spinner" /> Thinking with RoomShift AI…</> : <><WandSparkles size={17} /> Rearrange with AI</>}</button>
             {proposal && <div className="proposal-actions"><button className="apply-button" onClick={applyProposal}><Check size={16} /> Apply proposal</button><button className="cancel-button" onClick={cancelProposal}><X size={15} /> Cancel</button></div>}
             {proposal && <div className="proposal-summary"><span className="summary-label">WHY THIS WORKS</span><p>{proposal.summary}</p></div>}
           </section>
