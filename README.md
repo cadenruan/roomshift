@@ -15,7 +15,7 @@ Open [http://127.0.0.1:5173](http://127.0.0.1:5173). The local studio uses the s
 
 The public build calls a separate Cloudflare Worker so no API key is exposed in the browser. Workers AI includes a daily free allocation of 10,000 Neurons; the Worker uses the JSON-capable `@cf/meta/llama-3.1-8b-instruct-fast` model and validates every proposal before it can be applied.
 
-1. Create a Cloudflare API token with permission to deploy Workers and copy your Cloudflare account ID.
+1. Create a Cloudflare API token with `Workers Scripts: Edit` plus `Workers AI: Read` and `Workers AI: Edit`, then copy your Cloudflare account ID.
 2. Add GitHub repository secrets named `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
 3. Run the `Deploy RoomShift Workers AI` GitHub Actions workflow. It deploys the Worker named `roomshift-ai` and shows its `workers.dev` URL in the workflow log.
 4. Add a GitHub repository variable named `ROOMSHIFT_AI_URL` containing that Worker URL, without a trailing slash.

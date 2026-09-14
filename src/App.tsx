@@ -496,11 +496,11 @@ function App() {
 
   async function applyProposal() {
     if (!proposal) return;
+    if (layoutVersion.current !== proposal.baseVersion) {
+      setNotice({ tone: 'warning', text: 'The room changed while the proposal was open. Generate a fresh arrangement.' });
+      return;
+    }
     if (proposal.source === 'local') {
-      if (layoutVersion.current !== proposal.baseVersion) {
-        setNotice({ tone: 'warning', text: 'The room changed while the proposal was open. Generate a fresh arrangement.' });
-        return;
-      }
       commit({ ...layout, items: proposal.items }, 'AI arrangement applied. Undo is available if you want the previous room back.');
       setProposal(null);
       return;
